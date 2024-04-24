@@ -1,0 +1,46 @@
+image: docker:latest
+
+variables:
+  GOOGLE_TAG: eu.gcr.io/papers-kubernetes/$CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME:$CI_COMMIT_SHA
+  GOOGLE_TAG_LATEST: eu.gcr.io/papers-kubernetes/$CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME:latest
+
+stages:
+  - prepare
+  - build
+
+prepare:
+  stage: prepare
+  script:
+    - docker build -t $GOOGLE_TAG .
+  tags:
+    - docker
+
+build-android-arm64:
+  stage: build
+  when: manual
+  timeout: 2h
+  script:
+    - docker run --name build-$CI_COMMIT_SHA $GOOGLE_TAG /bin/bash -c "./tools/android_build.sh ./android-ndk-r26d 30 arm64"
+    - docker cp build-$CI_COMMIT_SHA:/nodejs/out_android/arm64-v8a arm64
+  after_script:
+    - docker rm -f build-$CI_COMMIT_SHA
+  tags:
+    - docker
+  artifacts:
+    paths:
+      - arm64
+
+build-android-arm:
+  stage: build
+  when: manual
+  timeout: 2h
+  script:
+    - docker run --name build-$CI_COMMIT_SHA $GOOGLE_TAG /bin/bash -c "./tools/android_build.sh ./android-ndk-r26d 30 arm"
+    - docker cp build-$CI_COMMIT_SHA:/nodejs/out_android/armeabi-v7a arm
+  after_script:
+    - docker rm -f build-$CI_COMMIT_SHA
+  tags:
+    - docker
+  artifacts:
+    paths:
+      - arm
