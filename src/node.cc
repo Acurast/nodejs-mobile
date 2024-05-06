@@ -1111,6 +1111,24 @@ void TearDownOncePerProcess() {
   }
 }
 
+ExitStatus::ExitStatus() {
+  error_ = nullptr;
+}
+
+std::string& ExitStatus::error() {
+  mutex_error_.lock();
+  std::string error = error_;
+  mutex_error_.unlock();
+
+  return error;
+}
+
+void ExitStatus::set_error(std::string error) {
+  mutex_error_.lock();
+  error_ = error;
+  mutex_error_.unlock();
+}
+
 InitializationResult::~InitializationResult() {}
 InitializationResultImpl::~InitializationResultImpl() {}
 

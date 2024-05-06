@@ -2,6 +2,7 @@
 #include <cstdarg>
 
 #include "debug_utils-inl.h"
+#include "node.h"
 #include "node_errors.h"
 #include "node_external_reference.h"
 #include "node_internals.h"

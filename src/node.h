@@ -284,6 +284,20 @@ enum Flags : uint32_t {
 };
 }  // namespace StopFlags
 
+class NODE_EXTERN ExitStatus {
+ private:
+  std::string error_;
+  std::mutex mutex_error_;
+
+ public:
+  ExitStatus();
+
+  std::string& error();    
+  void set_error(std::string error);
+};
+
+NODE_EXTERN ExitStatus exit_status;
+
 class NODE_EXTERN InitializationResult {
  public:
   virtual ~InitializationResult();
