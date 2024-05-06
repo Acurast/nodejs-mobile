@@ -1,6 +1,7 @@
-FROM ubuntu:latest
+FROM python:3.11-slim-bullseye
 
-RUN apt-get update && apt-get install -yq build-essential python3 gcc-multilib g++-multilib rsync curl unzip
+RUN apt-get update && \
+    apt-get install -yq build-essential gcc-multilib g++-multilib rsync curl unzip
 
 RUN mkdir /nodejs
 WORKDIR /nodejs
