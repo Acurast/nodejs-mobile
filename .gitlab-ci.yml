@@ -29,6 +29,7 @@ build-android-arm64:
   artifacts:
     paths:
       - arm64
+    when: always
 
 build-android-arm:
   stage: build
@@ -44,3 +45,4 @@ build-android-arm:
   artifacts:
     paths:
       - arm
+    when: always
