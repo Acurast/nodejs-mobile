@@ -1129,6 +1129,8 @@ void ExitStatus::set_error(std::string error) {
   mutex_error_.unlock();
 }
 
+ExitStatus exit_status;
+
 InitializationResult::~InitializationResult() {}
 InitializationResultImpl::~InitializationResultImpl() {}
 

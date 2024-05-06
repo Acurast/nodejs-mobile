@@ -296,7 +296,7 @@ class NODE_EXTERN ExitStatus {
   void set_error(std::string error);
 };
 
-NODE_EXTERN ExitStatus exit_status;
+NODE_EXTERN extern ExitStatus exit_status;
 
 class NODE_EXTERN InitializationResult {
  public:
