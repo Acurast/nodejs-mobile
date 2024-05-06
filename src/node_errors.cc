@@ -499,7 +499,9 @@ static void ReportFatalException(Environment* env,
 
   fflush(stderr);
 
-  node::exit_status.set_error(report_message);
+  if (node::error_capture != nullptr) {
+    node::error_capture->set_error(report_message);
+  }
 }
 
 [[noreturn]] void OnFatalError(const char* location, const char* message) {

@@ -1111,33 +1111,8 @@ void TearDownOncePerProcess() {
   }
 }
 
-ExitStatus::ExitStatus() {
-    error_ = nullptr;
-}
-
-ExitStatus::~ExitStatus() {
-    mutex_error_.lock();
-    if (error_ != nullptr) {
-        free((char*)error_);
-    }
-    mutex_error_.lock();
-}
-
-const char* ExitStatus::error() {
-    mutex_error_.lock();
-    const char* error = error_;
-    mutex_error_.lock();
-
-    return error;
-}
-
-void ExitStatus::set_error(std::string error) {
-    mutex_error_.lock();
-    error_ = strdup(error.c_str());
-    mutex_error_.unlock();
-}
-
-ExitStatus exit_status;
+ErrorCapture* error_capture;
+ErrorCapture::~ErrorCapture() {}
 
 InitializationResult::~InitializationResult() {}
 InitializationResultImpl::~InitializationResultImpl() {}
