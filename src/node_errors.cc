@@ -375,6 +375,11 @@ static void ReportFatalException(Environment* env,
 #endif
   };
 
+  node::Utf8Value captured_message(env->isolate(), message->Get());
+  if (node::error_capture != nullptr) {
+    node::error_capture->set_error(captured_message.ToString());
+  }
+
   Local<Value> arrow;
   Local<Value> stack_trace;
   bool decorated = IsExceptionDecorated(env, error);
@@ -498,10 +503,6 @@ static void ReportFatalException(Environment* env,
   }
 
   fflush(stderr);
-
-  if (node::error_capture != nullptr) {
-    node::error_capture->set_error(report_message);
-  }
 }
 
 [[noreturn]] void OnFatalError(const char* location, const char* message) {
