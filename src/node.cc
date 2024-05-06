@@ -1125,7 +1125,7 @@ std::string& ExitStatus::error() {
 
 void ExitStatus::set_error(std::string error) {
   mutex_error_.lock();
-  error_ = error;
+  error_ = std::move(error);
   mutex_error_.unlock();
 }
 
