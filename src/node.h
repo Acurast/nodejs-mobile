@@ -220,7 +220,6 @@ typedef intptr_t ssize_t;
 # include <sys/types.h>  // size_t, ssize_t
 #endif  // _WIN32
 
-
 namespace node {
 
 class IsolateData;
@@ -286,17 +285,18 @@ enum Flags : uint32_t {
 
 class NODE_EXTERN ExitStatus {
  private:
-  std::string error_;
+  const char* error_;
   std::mutex mutex_error_;
 
  public:
   ExitStatus();
+  ~ExitStatus();
 
-  std::string& error();    
+  const char* error();    
   void set_error(std::string error);
 };
 
-NODE_EXTERN extern ExitStatus exit_status;
+extern NODE_EXTERN ExitStatus exit_status;
 
 class NODE_EXTERN InitializationResult {
  public:
