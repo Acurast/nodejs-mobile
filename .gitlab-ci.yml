@@ -20,8 +20,9 @@ build-android-arm64:
   when: manual
   timeout: 2h
   script:
-    - docker run --name build-android-arm64-$CI_COMMIT_SHA $GOOGLE_TAG /bin/bash -c "./tools/android_build.sh ./android-ndk-r26d 30 arm64"
+    - docker run --name build-android-arm64-$CI_COMMIT_SHA $GOOGLE_TAG /bin/bash -c "./tools/android_build.sh ./android-ndk-r26d 30 arm64 | tee logs.txt"
     - docker cp build-android-arm64-$CI_COMMIT_SHA:/nodejs/out_android/arm64-v8a arm64
+    - docker cp build-android-arm64-$CI_COMMIT_SHA:/nodejs/logs.txt logs.txt
   after_script:
     - docker rm -f build-android-arm64-$CI_COMMIT_SHA
   tags:
@@ -29,6 +30,7 @@ build-android-arm64:
   artifacts:
     paths:
       - arm64
+      - logs.txt
     when: always
 
 build-android-arm:
@@ -36,8 +38,9 @@ build-android-arm:
   when: manual
   timeout: 2h
   script:
-    - docker run --name build-android-arm-$CI_COMMIT_SHA $GOOGLE_TAG /bin/bash -c "./tools/android_build.sh ./android-ndk-r26d 30 arm"
+    - docker run --name build-android-arm-$CI_COMMIT_SHA $GOOGLE_TAG /bin/bash -c "./tools/android_build.sh ./android-ndk-r26d 30 arm | tee logs.txt"
     - docker cp build-android-arm-$CI_COMMIT_SHA:/nodejs/out_android/armeabi-v7a arm
+    - docker cp build-android-arm-$CI_COMMIT_SHA:/nodejs/logs.txt logs.txt
   after_script:
     - docker rm -f build-android-arm-$CI_COMMIT_SHA
   tags:
@@ -45,4 +48,5 @@ build-android-arm:
   artifacts:
     paths:
       - arm
+      - logs.txt
     when: always
