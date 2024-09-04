@@ -54,7 +54,9 @@ for the following features are in the list of work we'd like to get to:
 * Running an archive of multiple files.
 * Embedding [Node.js CLI options][] into the binary.
 * [XCOFF][] executable format.
-* Run tests on Linux architectures/distributions other than AMD64 Ubuntu.
+* Run tests on Alpine Linux.
+* Run tests on s390x Linux.
+* Run tests on ppc64 Linux.
 
 ## Disabling single executable application support
 
@@ -64,7 +66,7 @@ To disable single executable application support, build Node.js with the
 ## Implementation
 
 When built with single executable application support, the Node.js process uses
-[`postject-api.h`][] to check if the `NODE_JS_CODE` section exists in the
+[`postject-api.h`][] to check if the `NODE_SEA_BLOB` section exists in the
 binary. If it is found, it passes the buffer to
 [`single_executable_application.js`][], which executes the contents of the
 embedded script.

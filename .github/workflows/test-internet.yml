@@ -7,22 +7,34 @@ on:
 
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    paths: [test/internet/**]
+    paths:
+      - .github/workflows/test-internet.yml
+      - test/internet/**
+      - internal/dns/**
+      - lib/dns.js
+      - lib/net.js
   push:
     branches:
       - main
       - canary
       - v[0-9]+.x-staging
       - v[0-9]+.x
-    paths: [test/internet/**]
+    paths:
+      - .github/workflows/test-internet.yml
+      - test/internet/**
+      - internal/dns/**
+      - lib/dns.js
+      - lib/net.js
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 env:
-  PYTHON_VERSION: '3.11'
+  PYTHON_VERSION: '3.12'
   FLAKY_TESTS: keep_retrying
+  CC: clang
+  CXX: clang++
 
 permissions:
   contents: read
@@ -30,18 +42,18 @@ permissions:
 jobs:
   test-internet:
     if: github.repository == 'nodejs/node' || github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab  # v3.5.2
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332  # v4.1.7
         with:
           persist-credentials: false
       - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@bd6b4b6205c4dbad673328db7b31b7fab9e241c0  # v4.6.1
+        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d  # v5.1.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Environment Information
         run: npx envinfo
       - name: Build
-        run: make build-ci -j2 V=1 CONFIG_FLAGS="--error-on-warn"
+        run: make build-ci -j4 V=1 CONFIG_FLAGS="--error-on-warn"
       - name: Test Internet
-        run: make test-internet -j2 V=1;
+        run: make test-internet -j4 V=1;

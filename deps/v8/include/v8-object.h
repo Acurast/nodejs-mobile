@@ -20,6 +20,8 @@ class Function;
 class FunctionTemplate;
 template <typename T>
 class PropertyCallbackInfo;
+class Module;
+class UnboundScript;
 
 /**
  * A private symbol
@@ -481,6 +483,21 @@ class V8_EXPORT Object : public Value {
   void SetInternalField(int index, Local<Value> value);
 
   /**
+   * Warning: These are Node.js-specific extentions used to avoid breaking
+   * changes in Node.js v20.x. They do not exist in V8 upstream and will
+   * not exist in Node.js v21.x. Node.js embedders and addon authors should
+   * not use them from v20.x.
+   */
+#ifndef NODE_WANT_INTERNALS
+  V8_DEPRECATED("This extention should only be used by Node.js core")
+#endif
+  void SetInternalFieldForNodeCore(int index, Local<Module> value);
+#ifndef NODE_WANT_INTERNALS
+  V8_DEPRECATED("This extention should only be used by Node.js core")
+#endif
+  void SetInternalFieldForNodeCore(int index, Local<UnboundScript> value);
+
+  /**
    * Gets a 2-byte-aligned native pointer from an internal field. This field
    * must have been set by SetAlignedPointerInInternalField, everything else
    * leads to undefined behavior.
@@ -594,8 +611,6 @@ class V8_EXPORT Object : public Value {
   /**
    * Returns the context in which the object was created.
    */
-  V8_DEPRECATED("Use MaybeLocal<Context> GetCreationContext()")
-  Local<Context> CreationContext();
   MaybeLocal<Context> GetCreationContext();
 
   /**
@@ -604,14 +619,23 @@ class V8_EXPORT Object : public Value {
   Local<Context> GetCreationContextChecked();
 
   /** Same as above, but works for Persistents */
-  V8_DEPRECATED(
-      "Use MaybeLocal<Context> GetCreationContext(const "
-      "PersistentBase<Object>& object)")
-  static Local<Context> CreationContext(const PersistentBase<Object>& object);
   V8_INLINE static MaybeLocal<Context> GetCreationContext(
       const PersistentBase<Object>& object) {
     return object.val_->GetCreationContext();
   }
+
+  /**
+   * Gets the context in which the object was created (see GetCreationContext())
+   * and if it's available reads respective embedder field value.
+   * If the context can't be obtained nullptr is returned.
+   * Basically it's a shortcut for
+   *   obj->GetCreationContext().GetAlignedPointerFromEmbedderData(index)
+   * which doesn't create a handle for Context object on the way and doesn't
+   * try to expand the embedder data attached to the context.
+   * In case the Local<Context> is already available because of other reasons,
+   * it's fine to keep using Context::GetAlignedPointerFromEmbedderData().
+   */
+  void* GetAlignedPointerFromEmbedderDataInCreationContext(int index);
 
   /**
    * Checks whether a callback is set by the
@@ -713,22 +737,27 @@ Local<Value> Object::GetInternalField(int index) {
 #ifndef V8_ENABLE_CHECKS
   using A = internal::Address;
   using I = internal::Internals;
-  A obj = *reinterpret_cast<A*>(this);
+  A obj = internal::ValueHelper::ValueAsAddress(this);
   // Fast path: If the object is a plain JSObject, which is the common case, we
   // know where to find the internal fields and can return the value directly.
   int instance_type = I::GetInstanceType(obj);
-  if (v8::internal::CanHaveInternalField(instance_type)) {
+  if (I::CanHaveInternalField(instance_type)) {
     int offset = I::kJSObjectHeaderSize + (I::kEmbedderDataSlotSize * index);
     A value = I::ReadRawField<A>(obj, offset);
 #ifdef V8_COMPRESS_POINTERS
     // We read the full pointer value and then decompress it in order to avoid
     // dealing with potential endiannes issues.
-    value = I::DecompressTaggedAnyField(obj, static_cast<uint32_t>(value));
+    value = I::DecompressTaggedField(obj, static_cast<uint32_t>(value));
 #endif
+
+#ifdef V8_ENABLE_CONSERVATIVE_STACK_SCANNING
+    return Local<Value>(reinterpret_cast<Value*>(value));
+#else
     internal::Isolate* isolate =
         internal::IsolateFromNeverReadOnlySpaceObject(obj);
     A* result = HandleScope::CreateHandle(isolate, value);
     return Local<Value>(reinterpret_cast<Value*>(result));
+#endif
   }
 #endif
   return SlowGetInternalField(index);
@@ -738,18 +767,17 @@ void* Object::GetAlignedPointerFromInternalField(int index) {
 #if !defined(V8_ENABLE_CHECKS)
   using A = internal::Address;
   using I = internal::Internals;
-  A obj = *reinterpret_cast<A*>(this);
+  A obj = internal::ValueHelper::ValueAsAddress(this);
   // Fast path: If the object is a plain JSObject, which is the common case, we
   // know where to find the internal fields and can return the value directly.
   auto instance_type = I::GetInstanceType(obj);
-  if (v8::internal::CanHaveInternalField(instance_type)) {
-    int offset = I::kJSObjectHeaderSize + (I::kEmbedderDataSlotSize * index);
-#ifdef V8_SANDBOXED_EXTERNAL_POINTERS
-    offset += I::kEmbedderDataSlotRawPayloadOffset;
-#endif
-    internal::Isolate* isolate = I::GetIsolateForSandbox(obj);
-    A value = I::ReadExternalPointerField(
-        isolate, obj, offset, internal::kEmbedderDataSlotPayloadTag);
+  if (I::CanHaveInternalField(instance_type)) {
+    int offset = I::kJSObjectHeaderSize + (I::kEmbedderDataSlotSize * index) +
+                 I::kEmbedderDataSlotExternalPointerOffset;
+    Isolate* isolate = I::GetIsolateForSandbox(obj);
+    A value =
+        I::ReadExternalPointerField<internal::kEmbedderDataSlotPayloadTag>(
+            isolate, obj, offset);
     return reinterpret_cast<void*>(value);
   }
 #endif

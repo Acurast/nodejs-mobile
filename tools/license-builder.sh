@@ -103,6 +103,8 @@ addlicense "markupsafe" "tools/inspector_protocol/markupsafe" "$licenseText"
 # Testing tools
 licenseText="$(sed -e '/^$/,$d' -e 's/^#$//' -e 's/^# //' "${rootdir}/tools/cpplint.py" | tail -n +3)"
 addlicense "cpplint.py" "tools/cpplint.py" "$licenseText"
+licenseText="$(sed -e '/^$/,$d' -e 's/^#$//' -e 's/^# //' "${rootdir}/tools/gypi_to_gn.py" | tail -n +3)"
+addlicense "gypi_to_gn.py" "tools/gypi_to_gn.py" "$licenseText"
 licenseText="$(cat "${rootdir}/tools/node_modules/eslint/LICENSE")"
 addlicense "ESLint" "tools/node_modules/eslint" "$licenseText"
 licenseText="$(cat "${rootdir}/deps/googletest/LICENSE")"
@@ -126,9 +128,6 @@ addlicense "brotli" "deps/brotli" "$licenseText"
 
 licenseText="$(cat "${rootdir}/deps/histogram/LICENSE.txt")"
 addlicense "HdrHistogram" "deps/histogram" "$licenseText"
-
-licenseText="$(curl -sL https://raw.githubusercontent.com/highlightjs/highlight.js/63f367c46f2eeb6f9b7a3545e325eeeb917f9942/LICENSE)"
-addlicense "highlight.js" "doc/api_assets/highlight.pack.js" "$licenseText"
 
 licenseText="$(curl -sL https://raw.githubusercontent.com/bnoordhuis/node-heapdump/0ca52441e46241ffbea56a389e2856ec01c48c97/LICENSE)"
 addlicense "node-heapdump" "src/heap_utils.cc" "$licenseText"

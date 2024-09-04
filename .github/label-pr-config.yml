@@ -21,7 +21,7 @@ subSystemLabels:
   /^src\/tty_/: c++, tty
   /^src\/node_url/: c++, whatwg-url
   /^src\/node_util/: c++, util
-  /^src\/(?:node_v8|v8abbr)/: c++, v8 engine
+  /^src\/node_v8/: c++, v8 engine
   /^src\/node_contextify/: c++, vm
   /^src\/node_zlib/: c++, zlib
   /^src\/tracing/: c++, tracing
@@ -33,6 +33,7 @@ subSystemLabels:
   /^src\/quic\/*/: c++, quic
   /^src\/node_bob*/: c++, quic
   /^src\/node_sea/: single-executable
+  /^src\/node_sqlite.*/: c++, sqlite
 
   # Properly label changes to V8 inspector integration-related files
   /^src\/inspector_/: c++, inspector, needs-ci
@@ -47,7 +48,7 @@ subSystemLabels:
   /^\w+\.md$/: doc
   # Different variants of Makefile and build files
   /^(?:tools\/)?(?:Makefile|BSDmakefile|create_android_makefiles)$/: build, needs-ci
-  /^tools\/(?:install\.py|genv8constants\.py|getnodeversion\.py|js2c\.py|utils\.py|configure\.d\/.*)$/: build, python, needs-ci
+  /^tools\/(?:install\.py|getnodeversion\.py|js2c\.py|utils\.py|configure\.d\/.*)$/: build, python, needs-ci
   /^vcbuild\.bat$/: build, windows, needs-ci
   /^(?:android-)?configure|node\.gyp|common\.gypi$/: build, needs-ci
   # More specific tools
@@ -86,12 +87,12 @@ subSystemLabels:
   # Oddities first
   /^lib\/(?:punycode|\w+\/freelist|sys\.js)/: ''
   /^lib\/constants\.js$/: lib / src
-  /^lib\/internal/debugger$/: debugger
+  /^lib\/internal\/debugger$/: debugger
   /^lib\/internal\/linkedlist\.js$/: timers
   /^lib\/internal\/bootstrap/: lib / src
   /^lib\/internal\/v8_prof_/: tools
   /^lib\/internal\/socket(?:_list|address)\.js$/: net
-  /^lib\/\w+\/streams$/: stream
+  /^lib\/(_stream.*|internal\/streams\/.*|stream\.js|stream\/.*)$/: stream
   /^lib\/.*http2/: http2
   /^lib\/worker_threads.js$/: worker
   /^lib\/test.js$/: test_runner
@@ -186,6 +187,7 @@ allJsSubSystems:
   - readline
   - repl
   - report
+  - sqlite
   - stream
   - string_decoder
   - timers

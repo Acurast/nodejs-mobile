@@ -4,6 +4,7 @@
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
+#include "aliased_buffer.h"
 #include "base_object.h"
 #include "util.h"
 
@@ -22,21 +23,10 @@ struct PropInfo {
   SnapshotIndex index;  // In the snapshot
 };
 
-#define SERIALIZABLE_OBJECT_TYPES(V)                                           \
-  V(fs_binding_data, fs::BindingData)                                          \
-  V(v8_binding_data, v8_utils::BindingData)                                    \
-  V(blob_binding_data, BlobBindingData)                                        \
-  V(process_binding_data, process::BindingData)                                \
-  V(url_binding_data, url::BindingData)                                        \
-  V(util_weak_reference, util::WeakReference)
-
-enum class EmbedderObjectType : uint8_t {
-#define V(PropertyName, NativeType) k_##PropertyName,
-  SERIALIZABLE_OBJECT_TYPES(V)
-#undef V
-};
-
 typedef size_t SnapshotIndex;
+
+bool WithoutCodeCache(const SnapshotFlags& flags);
+bool WithoutCodeCache(const SnapshotConfig& config);
 
 // When serializing an embedder object, we'll serialize the native states
 // into a chunk that can be mapped into a subclass of InternalFieldInfoBase,
@@ -57,6 +47,7 @@ struct InternalFieldInfoBase {
                       std::is_same_v<InternalFieldInfoBase, T>,
                   "Can only accept InternalFieldInfoBase subclasses");
     void* buf = ::operator new[](sizeof(T));
+    memset(buf, 0, sizeof(T));  // Make the padding reproducible.
     T* result = new (buf) T;
     result->type = type;
     result->length = sizeof(T);
@@ -81,6 +72,14 @@ struct InternalFieldInfoBase {
   InternalFieldInfoBase() = default;
 };
 
+struct EmbedderTypeInfo {
+  enum class MemoryMode : uint8_t { kBaseObject, kCppGC };
+  EmbedderTypeInfo(EmbedderObjectType t, MemoryMode m) : type(t), mode(m) {}
+  EmbedderTypeInfo() = default;
+  EmbedderObjectType type;
+  MemoryMode mode;
+};
+
 // An interface for snapshotable native objects to inherit from.
 // Use the SERIALIZABLE_OBJECT_METHODS() macro in the class to define
 // the following methods to implement:
@@ -102,7 +101,7 @@ class SnapshotableObject : public BaseObject {
   SnapshotableObject(Realm* realm,
                      v8::Local<v8::Object> wrap,
                      EmbedderObjectType type);
-  std::string_view GetTypeName() const;
+  std::string GetTypeName() const;
 
   // If returns false, the object will not be serialized.
   virtual bool PrepareForSerialization(v8::Local<v8::Context> context,
@@ -135,6 +134,32 @@ void DeserializeNodeInternalFields(v8::Local<v8::Object> holder,
 void SerializeSnapshotableObjects(Realm* realm,
                                   v8::SnapshotCreator* creator,
                                   RealmSerializeInfo* info);
+
+#define DCHECK_IS_SNAPSHOT_SLOT(index) DCHECK_EQ(index, BaseObject::kSlot)
+
+namespace mksnapshot {
+class BindingData : public SnapshotableObject {
+ public:
+  struct InternalFieldInfo : public node::InternalFieldInfoBase {
+    AliasedBufferIndex is_building_snapshot_buffer;
+  };
+
+  BindingData(Realm* realm,
+              v8::Local<v8::Object> obj,
+              InternalFieldInfo* info = nullptr);
+  SET_BINDING_ID(mksnapshot_binding_data)
+  SERIALIZABLE_OBJECT_METHODS()
+
+  void MemoryInfo(MemoryTracker* tracker) const override;
+  SET_SELF_SIZE(BindingData)
+  SET_MEMORY_INFO_NAME(BindingData)
+
+ private:
+  AliasedUint8Array is_building_snapshot_buffer_;
+  InternalFieldInfo* internal_field_info_ = nullptr;
+};
+}  // namespace mksnapshot
+
 }  // namespace node
 
 #endif  // defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS

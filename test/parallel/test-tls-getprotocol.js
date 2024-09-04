@@ -11,9 +11,18 @@ const tls = require('tls');
 const fixtures = require('../common/fixtures');
 
 const clientConfigs = [
-  { secureProtocol: 'TLSv1_method', version: 'TLSv1' },
-  { secureProtocol: 'TLSv1_1_method', version: 'TLSv1.1' },
-  { secureProtocol: 'TLSv1_2_method', version: 'TLSv1.2' },
+  {
+    secureProtocol: 'TLSv1_method',
+    version: 'TLSv1',
+    ciphers: (common.hasOpenSSL31 ? 'DEFAULT:@SECLEVEL=0' : 'DEFAULT')
+  }, {
+    secureProtocol: 'TLSv1_1_method',
+    version: 'TLSv1.1',
+    ciphers: (common.hasOpenSSL31 ? 'DEFAULT:@SECLEVEL=0' : 'DEFAULT')
+  }, {
+    secureProtocol: 'TLSv1_2_method',
+    version: 'TLSv1.2'
+  },
 ];
 
 const serverConfig = {
@@ -26,10 +35,11 @@ const serverConfig = {
 const server = tls.createServer(serverConfig, common.mustCall(clientConfigs.length))
 .listen(0, common.localhostIPv4, function() {
   let connected = 0;
-  clientConfigs.forEach(function(v) {
+  for (const v of clientConfigs) {
     tls.connect({
       host: common.localhostIPv4,
       port: server.address().port,
+      ciphers: v.ciphers,
       rejectUnauthorized: false,
       secureProtocol: v.secureProtocol
     }, common.mustCall(function() {
@@ -41,5 +51,5 @@ const server = tls.createServer(serverConfig, common.mustCall(clientConfigs.leng
       if (++connected === clientConfigs.length)
         server.close();
     }));
-  });
+  }
 });

@@ -14,8 +14,6 @@ import bz2
 import io
 from pathlib import Path
 
-from distutils.version import StrictVersion
-
 # If not run from node/, cd to node/.
 os.chdir(Path(__file__).parent)
 
@@ -30,6 +28,7 @@ tools_path = Path('tools')
 
 sys.path.insert(0, str(tools_path / 'gyp' / 'pylib'))
 from gyp.common import GetFlavor
+from packaging.version import Version
 
 # imports in tools/configure.d
 sys.path.insert(0, str(tools_path / 'configure.d'))
@@ -123,6 +122,12 @@ parser.add_argument('--no-cross-compiling',
     default=None,
     help='force build to be considered as NOT cross compiled')
 
+parser.add_argument('--use-prefix-to-find-headers',
+    action='store_true',
+    dest='use_prefix_to_find_headers',
+    default=None,
+    help='use the prefix to look for pre-installed headers')
+
 parser.add_argument('--dest-os',
     action='store',
     dest='dest_os',
@@ -158,14 +163,14 @@ parser.add_argument("--fully-static",
     dest="fully_static",
     default=None,
     help="Generate an executable without external dynamic libraries. This "
-         "will not work on OSX when using the default compilation environment")
+         "will not work on macOS when using the default compilation environment")
 
 parser.add_argument("--partly-static",
     action="store_true",
     dest="partly_static",
     default=None,
     help="Generate an executable with libgcc and libstdc++ libraries. This "
-         "will not work on OSX when using the default compilation environment")
+         "will not work on macOS when using the default compilation environment")
 
 parser.add_argument("--enable-vtune-profiling",
     action="store_true",
@@ -398,6 +403,74 @@ shared_optgroup.add_argument('--shared-zlib-libpath',
     dest='shared_zlib_libpath',
     help='a directory to search for the shared zlib DLL')
 
+shared_optgroup.add_argument('--shared-simdjson',
+    action='store_true',
+    dest='shared_simdjson',
+    default=None,
+    help='link to a shared simdjson DLL instead of static linking')
+
+shared_optgroup.add_argument('--shared-simdjson-includes',
+    action='store',
+    dest='shared_simdjson_includes',
+    help='directory containing simdjson header files')
+
+shared_optgroup.add_argument('--shared-simdjson-libname',
+    action='store',
+    dest='shared_simdjson_libname',
+    default='simdjson',
+    help='alternative lib name to link to [default: %(default)s]')
+
+shared_optgroup.add_argument('--shared-simdjson-libpath',
+    action='store',
+    dest='shared_simdjson_libpath',
+    help='a directory to search for the shared simdjson DLL')
+
+
+shared_optgroup.add_argument('--shared-simdutf',
+    action='store_true',
+    dest='shared_simdutf',
+    default=None,
+    help='link to a shared simdutf DLL instead of static linking')
+
+shared_optgroup.add_argument('--shared-simdutf-includes',
+    action='store',
+    dest='shared_simdutf_includes',
+    help='directory containing simdutf header files')
+
+shared_optgroup.add_argument('--shared-simdutf-libname',
+    action='store',
+    dest='shared_simdutf_libname',
+    default='simdutf',
+    help='alternative lib name to link to [default: %(default)s]')
+
+shared_optgroup.add_argument('--shared-simdutf-libpath',
+    action='store',
+    dest='shared_simdutf_libpath',
+    help='a directory to search for the shared simdutf DLL')
+
+
+shared_optgroup.add_argument('--shared-ada',
+    action='store_true',
+    dest='shared_ada',
+    default=None,
+    help='link to a shared ada DLL instead of static linking')
+
+shared_optgroup.add_argument('--shared-ada-includes',
+    action='store',
+    dest='shared_ada_includes',
+    help='directory containing ada header files')
+
+shared_optgroup.add_argument('--shared-ada-libname',
+    action='store',
+    dest='shared_ada_libname',
+    default='ada',
+    help='alternative lib name to link to [default: %(default)s]')
+
+shared_optgroup.add_argument('--shared-ada-libpath',
+    action='store',
+    dest='shared_ada_libpath',
+    help='a directory to search for the shared ada DLL')
+
 shared_optgroup.add_argument('--shared-brotli',
     action='store_true',
     dest='shared_brotli',
@@ -442,8 +515,6 @@ shared_optgroup.add_argument('--shared-cares-libpath',
     dest='shared_cares_libpath',
     help='a directory to search for the shared cares DLL')
 
-parser.add_argument_group(shared_optgroup)
-
 for builtin in shareable_builtins:
   builtin_id = 'shared_builtin_' + builtin + '_path'
   shared_builtin_optgroup.add_argument('--shared-builtin-' + builtin + '-path',
@@ -452,19 +523,10 @@ for builtin in shareable_builtins:
     help='Path to shared file for ' + builtin + ' builtin. '
          'Will be used instead of bundled version at runtime')
 
-parser.add_argument_group(shared_builtin_optgroup)
-
 static_optgroup.add_argument('--static-zoslib-gyp',
     action='store',
     dest='static_zoslib_gyp',
-    help='path to zoslib.gyp file for includes and to link to static zoslib libray')
-
-parser.add_argument_group(static_optgroup)
-
-parser.add_argument('--systemtap-includes',
-    action='store',
-    dest='systemtap_includes',
-    help='directory containing systemtap header files')
+    help='path to zoslib.gyp file for includes and to link to static zoslib library')
 
 parser.add_argument('--tag',
     action='store',
@@ -546,18 +608,6 @@ parser.add_argument('--with-mips-float-abi',
     choices=valid_mips_float_abi,
     help=f"MIPS floating-point ABI ({', '.join(valid_mips_float_abi)}) [default: %(default)s]")
 
-parser.add_argument('--with-dtrace',
-    action='store_true',
-    dest='with_dtrace',
-    default=None,
-    help='build with DTrace (default is true on sunos and darwin)')
-
-parser.add_argument('--with-etw',
-    action='store_true',
-    dest='with_etw',
-    default=None,
-    help='build with ETW (default is true on Windows)')
-
 parser.add_argument('--use-largepages',
     action='store_true',
     dest='node_use_large_pages',
@@ -626,6 +676,14 @@ parser.add_argument('--with-ltcg',
     default=None,
     help='Use Link Time Code Generation. This feature is only available on Windows.')
 
+parser.add_argument('--write-snapshot-as-array-literals',
+    action='store_true',
+    dest='write_snapshot_as_array_literals',
+    default=None,
+    help='Write the snapshot data as array literals for readability.'
+         'By default the snapshot data may be written as string literals on some '
+         'platforms to speed up compilation.')
+
 parser.add_argument('--without-node-snapshot',
     action='store_true',
     dest='without_node_snapshot',
@@ -649,8 +707,6 @@ intl_optgroup.add_argument('--download-path',
     default='deps',
     help='Download directory [default: %(default)s]')
 
-parser.add_argument_group(intl_optgroup)
-
 parser.add_argument('--debug-lib',
     action='store_true',
     dest='node_debug_lib',
@@ -662,20 +718,6 @@ http2_optgroup.add_argument('--debug-nghttp2',
     dest='debug_nghttp2',
     default=None,
     help='build nghttp2 with DEBUGBUILD (default is false)')
-
-parser.add_argument_group(http2_optgroup)
-
-parser.add_argument('--without-dtrace',
-    action='store_true',
-    dest='without_dtrace',
-    default=None,
-    help='build without DTrace')
-
-parser.add_argument('--without-etw',
-    action='store_true',
-    dest='without_etw',
-    default=None,
-    help='build without ETW')
 
 parser.add_argument('--without-npm',
     action='store_true',
@@ -739,6 +781,12 @@ parser.add_argument('--enable-asan',
     dest='enable_asan',
     default=None,
     help='compile for Address Sanitizer to find memory bugs')
+
+parser.add_argument('--enable-ubsan',
+    action='store_true',
+    dest='enable_ubsan',
+    default=None,
+    help='compile for Undefined Behavior Sanitizer')
 
 parser.add_argument('--enable-static',
     action='store_true',
@@ -833,6 +881,12 @@ parser.add_argument('--v8-enable-hugepage',
     default=None,
     help='Enable V8 transparent hugepage support. This feature is only '+
          'available on Linux platform.')
+
+parser.add_argument('--v8-enable-maglev',
+    action='store_true',
+    dest='v8_enable_maglev',
+    default=None,
+    help='Enable V8 Maglev compiler. Not available on all platforms.')
 
 parser.add_argument('--v8-enable-short-builtin-calls',
     action='store_true',
@@ -1061,7 +1115,7 @@ def check_compiler(o):
   print_verbose(f"Detected {'clang ' if is_clang else ''}C++ compiler (CXX={CXX}) version: {version_str}")
   if not ok:
     warn(f'failed to autodetect C++ compiler version (CXX={CXX})')
-  elif clang_version < (8, 0, 0) if is_clang else gcc_version < (8, 3, 0):
+  elif clang_version < (8, 0, 0) if is_clang else gcc_version < (10, 1, 0):
     warn(f'C++ compiler (CXX={CXX}, {version_str}) too old, need g++ 10.1.0 or clang++ 8.0.0')
 
   ok, is_clang, clang_version, gcc_version = try_check_compiler(CC, 'c')
@@ -1273,6 +1327,7 @@ def configure_node(o):
   o['variables']['debug_node'] = b(options.debug_node)
   o['default_configuration'] = 'Debug' if options.debug else 'Release'
   o['variables']['error_on_warn'] = b(options.error_on_warn)
+  o['variables']['use_prefix_to_find_headers'] = b(options.use_prefix_to_find_headers)
 
   host_arch = host_arch_win() if os.name == 'nt' else host_arch_cc()
   target_arch = options.dest_cpu or host_arch
@@ -1297,10 +1352,7 @@ def configure_node(o):
 
   o['variables']['want_separate_host_toolset'] = int(cross_compiling)
 
-  # Enable branch protection for arm64
   if target_arch == 'arm64':
-    # nodejs-mobile patch: from https://github.com/nodejs/node/pull/45756
-    # o['cflags']+=['-msign-return-address=all']
     o['variables']['arm_fpu'] = options.arm_fpu or 'neon'
 
   if options.node_snapshot_main is not None:
@@ -1327,6 +1379,11 @@ def configure_node(o):
     # TODO(refack): fix this when implementing embedded code-cache when cross-compiling.
     o['variables']['node_use_node_code_cache'] = b(
       not cross_compiling and not options.shared)
+
+  if options.write_snapshot_as_array_literals is not None:
+     o['variables']['node_write_snapshot_as_array_literals'] = b(options.write_snapshot_as_array_literals)
+  else:
+     o['variables']['node_write_snapshot_as_array_literals'] = b(flavor != 'mac' and flavor != 'linux')
 
   if target_arch == 'arm':
     configure_arm(o)
@@ -1386,22 +1443,6 @@ def configure_node(o):
 
   o['variables']['enable_lto'] = b(options.enable_lto)
 
-  if flavor in ('solaris', 'mac', 'linux', 'freebsd'):
-    use_dtrace = not options.without_dtrace
-    # Don't enable by default on linux and freebsd
-    if flavor in ('linux', 'freebsd'):
-      use_dtrace = options.with_dtrace
-
-    if flavor == 'linux':
-      if options.systemtap_includes:
-        o['include_dirs'] += [options.systemtap_includes]
-    o['variables']['node_use_dtrace'] = b(use_dtrace)
-  elif options.with_dtrace:
-    raise Exception(
-       'DTrace is currently only supported on SunOS, MacOS or Linux systems.')
-  else:
-    o['variables']['node_use_dtrace'] = 'false'
-
   if options.node_use_large_pages or options.node_use_large_pages_script_lld:
     warn('''The `--use-largepages` and `--use-largepages-script-lld` options
          have no effect during build time. Support for mapping to large pages is
@@ -1415,14 +1456,6 @@ def configure_node(o):
   o['variables']['single_executable_application'] = b(not options.disable_single_executable_application)
   if options.disable_single_executable_application:
     o['defines'] += ['DISABLE_SINGLE_EXECUTABLE_APPLICATION']
-
-  # By default, enable ETW on Windows.
-  if flavor == 'win':
-    o['variables']['node_use_etw'] = b(not options.without_etw)
-  elif options.with_etw:
-    raise Exception('ETW is only supported on Windows.')
-  else:
-    o['variables']['node_use_etw'] = 'false'
 
   o['variables']['node_with_ltcg'] = b(options.with_ltcg)
   if flavor != 'win' and options.with_ltcg:
@@ -1473,9 +1506,10 @@ def configure_node(o):
   o['variables']['shlib_suffix'] = shlib_suffix
 
   if options.linked_module:
-    o['variables']['library_files'] = options.linked_module
+    o['variables']['linked_module_files'] = options.linked_module
 
   o['variables']['asan'] = int(options.enable_asan or 0)
+  o['variables']['ubsan'] = int(options.enable_ubsan or 0)
 
   if options.coverage:
     o['variables']['coverage'] = 'true'
@@ -1544,9 +1578,13 @@ def configure_v8(o):
   o['variables']['v8_random_seed'] = 0  # Use a random seed for hash tables.
   o['variables']['v8_promise_internal_field_count'] = 1 # Add internal field to promises for async hooks.
   o['variables']['v8_use_siphash'] = 0 if options.without_siphash else 1
+  o['variables']['v8_enable_maglev'] = 1 if options.v8_enable_maglev else 0
   o['variables']['v8_enable_pointer_compression'] = 1 if options.enable_pointer_compression else 0
+  o['variables']['v8_enable_sandbox'] = 1 if options.enable_pointer_compression else 0
   o['variables']['v8_enable_31bit_smis_on_64bit_arch'] = 1 if options.enable_pointer_compression else 0
   o['variables']['v8_enable_shared_ro_heap'] = 0 if options.enable_pointer_compression or options.disable_shared_ro_heap else 1
+  o['variables']['v8_enable_extensible_ro_snapshot'] = 0
+  o['variables']['v8_enable_v8_checks'] = 1 if options.debug else 0
   o['variables']['v8_trace_maps'] = 1 if options.trace_maps else 0
   o['variables']['node_use_v8_platform'] = b(not options.without_v8_platform)
   o['variables']['node_use_bundled_v8'] = b(not options.without_bundled_v8)
@@ -1614,10 +1652,10 @@ def configure_openssl(o):
     # supported asm compiler for AVX2. See https://github.com/openssl/openssl/
     # blob/OpenSSL_1_1_0-stable/crypto/modes/asm/aesni-gcm-x86_64.pl#L52-L69
     openssl110_asm_supported = \
-      ('gas_version' in variables and StrictVersion(variables['gas_version']) >= StrictVersion('2.23')) or \
-      ('xcode_version' in variables and StrictVersion(variables['xcode_version']) >= StrictVersion('5.0')) or \
-      ('llvm_version' in variables and StrictVersion(variables['llvm_version']) >= StrictVersion('3.3')) or \
-      ('nasm_version' in variables and StrictVersion(variables['nasm_version']) >= StrictVersion('2.10'))
+      ('gas_version' in variables and Version(variables['gas_version']) >= Version('2.23')) or \
+      ('xcode_version' in variables and Version(variables['xcode_version']) >= Version('5.0')) or \
+      ('llvm_version' in variables and Version(variables['llvm_version']) >= Version('3.3')) or \
+      ('nasm_version' in variables and Version(variables['nasm_version']) >= Version('2.10'))
 
     if is_x86 and not openssl110_asm_supported:
       error('''Did not find a new enough assembler, install one or build with
@@ -1653,7 +1691,7 @@ def configure_openssl(o):
 def configure_static(o):
   if options.fully_static or options.partly_static:
     if flavor == 'mac':
-      warn("Generation of static executable will not work on OSX "
+      warn("Generation of static executable will not work on macOS "
             "when using the default compilation environment")
       return
 
@@ -2079,6 +2117,9 @@ configure_napi(output)
 configure_library('zlib', output)
 configure_library('http_parser', output)
 configure_library('libuv', output)
+configure_library('ada', output)
+configure_library('simdjson', output)
+configure_library('simdutf', output)
 configure_library('brotli', output, pkgname=['libbrotlidec', 'libbrotlienc'])
 configure_library('cares', output, pkgname='libcares')
 configure_library('nghttp2', output, pkgname='libnghttp2')
@@ -2169,6 +2210,17 @@ write('config.mk', do_not_edit + config_str)
 gyp_args = ['--no-parallel', '-Dconfiguring_node=1']
 gyp_args += ['-Dbuild_type=' + config['BUILDTYPE']]
 
+# Remove the trailing .exe from the executable name, otherwise the python.exe
+# would be rewrote as python_host.exe due to hack in GYP for supporting cross
+# compilation on Windows.
+# See https://github.com/nodejs/node/pull/32867 for related change.
+python = sys.executable
+if flavor == 'win' and python.lower().endswith('.exe'):
+  python = python[:-4]
+# Always set 'python' variable, otherwise environments that only have python3
+# will fail to run python scripts.
+gyp_args += ['-Dpython=' + python]
+
 if options.use_ninja:
   gyp_args += ['-f', 'ninja-' + flavor]
 elif flavor == 'win' and sys.platform != 'msys':
@@ -2178,10 +2230,8 @@ else:
 
 if options.compile_commands_json:
   gyp_args += ['-f', 'compile_commands_json']
-
-# override the variable `python` defined in common.gypi
-if bin_override is not None:
-  gyp_args += ['-Dpython=' + sys.executable]
+  os.path.islink('./compile_commands.json') and os.unlink('./compile_commands.json')
+  os.symlink('./out/' + config['BUILDTYPE'] + '/compile_commands.json', './compile_commands.json')
 
 # pass the leftover non-whitespace positional arguments to GYP
 gyp_args += [arg for arg in args if not str.isspace(arg)]

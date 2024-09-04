@@ -4,9 +4,6 @@
 .\" * Language reference:
 .\"   https://man.openbsd.org/mdoc.7
 .\"
-.\" * Atom editor support:
-.\"   https://atom.io/packages/language-roff
-.\"
 .\" * Linting changes:
 .\"   mandoc -Wall -Tlint /path/to/this.file  # BSD
 .\"   groff -w all -z /path/to/this.file      # GNU/Linux, macOS
@@ -76,6 +73,24 @@ the next argument will be used as a script filename.
 .It Fl -abort-on-uncaught-exception
 Aborting instead of exiting causes a core file to be generated for analysis.
 .
+.It Fl -allow-fs-read
+Allow file system read access when using the permission model.
+.
+.It Fl -allow-fs-write
+Allow file system write access when using the permission model.
+.
+.It Fl -allow-addons
+Allow using native addons when using the permission model.
+.
+.It Fl -allow-child-process
+Allow spawning process when using the permission model.
+.
+.It Fl -allow-wasi
+Allow execution of WASI when using the permission model.
+.
+.It Fl -allow-worker
+Allow creating worker threads when using the permission model.
+.
 .It Fl -completion-bash
 Print source-able bash completion script for Node.js.
 .
@@ -127,6 +142,11 @@ is `delete`, the property will be removed entirely. If
 is `throw`, accesses to the property will throw an exception with the code
 `ERR_PROTO_ACCESS`.
 .
+.It Fl -disable-wasm-trap-handler Ns = Ns Ar mode
+Disable trap-handler-based WebAssembly bound checks and fall back to
+inline bound checks so that WebAssembly can be run with limited virtual
+memory.
+.
 .It Fl -disallow-code-generation-from-strings
 Make built-in language features like `eval` and `new Function` that generate
 code from strings throw an exception instead. This does not affect the Node.js
@@ -140,8 +160,10 @@ Requires Node.js to be built with
 .It Fl -enable-source-maps
 Enable Source Map V3 support for stack traces.
 .
-.It Fl -experimental-global-customevent
-Expose the CustomEvent on the global scope.
+.It Fl -experimental-default-type Ns = Ns Ar type
+Interpret as either ES modules or CommonJS modules input via --eval or STDIN, when --input-type is unspecified;
+.js or extensionless files with no sibling or parent package.json;
+.js or extensionless files whose nearest parent package.json lacks a "type" field, unless under node_modules.
 .
 .It Fl -experimental-global-webcrypto
 Expose the Web Crypto API on the global scope.
@@ -157,6 +179,9 @@ to use as a custom module loader.
 .It Fl -experimental-network-imports
 Enable experimental support for loading modules using `import` over `https:`.
 .
+.It Fl -experimental-permission
+Enable the experimental permission model.
+.
 .It Fl -experimental-policy
 Use the specified file as a security policy.
 .
@@ -166,14 +191,20 @@ Use this flag to enable ShadowRealm support.
 .It Fl -experimental-test-coverage
 Enable code coverage in the test runner.
 .
+.It Fl -experimental-websocket
+Enable experimental support for the WebSocket API.
+.
 .It Fl -no-experimental-fetch
 Disable experimental support for the Fetch API.
 .
+.It Fl -no-experimental-global-customevent
+Disable exposition of the CustomEvent on the global scope.
+.
+.It Fl -no-experimental-global-webcrypto
+Disable exposition of the Web Crypto API on the global scope.
+.
 .It Fl -no-experimental-repl-await
 Disable top-level await keyword support in REPL.
-.
-.It Fl -experimental-specifier-resolution
-Select extension resolution algorithm for ES Modules; either 'explicit' (default) or 'node'.
 .
 .It Fl -experimental-vm-modules
 Enable experimental ES module support in VM module.
@@ -255,6 +286,11 @@ and
 .Sy http .
 Default is
 .Sy stderr,http .
+.
+.It Fl -inspect-wait Ns = Ns Ar [host:]port
+Activate inspector on
+.Ar host:port
+and wait for debugger to be attached.
 .
 .It Fl -inspect Ns = Ns Ar [host:]port
 Activate inspector on
@@ -395,6 +431,14 @@ Specify the minimum allocation from the OpenSSL secure heap. The default is 2. T
 .It Fl -test
 Starts the Node.js command line test runner.
 .
+.It Fl -test-concurrency
+The maximum number of test files that the test runner CLI will execute
+concurrently.
+.
+.It Fl -test-force-exit
+Configures the test runner to exit the process once all known tests have
+finished executing even if the event loop would otherwise remain active.
+.
 .It Fl -test-name-pattern
 A regular expression that configures the test runner to only execute tests
 whose name matches the provided pattern.
@@ -408,6 +452,12 @@ The destination for the corresponding test reporter.
 .It Fl -test-only
 Configures the test runner to only execute top level tests that have the `only`
 option set.
+.
+.It Fl -test-shard
+Test suite shard to execute in a format of <index>/<total>.
+
+.It Fl -test-timeout
+A number of milliseconds the test execution will fail after.
 .
 .It Fl -throw-deprecation
 Throw errors for deprecations.
@@ -752,13 +802,3 @@ Documentation:
 .Pp
 GitHub repository and issue tracker:
 .Sy https://github.com/nodejs/node
-.
-.Pp
-IRC (general questions):
-.Sy "libera.chat #node.js"
-(unofficial)
-.
-.\"======================================================================
-.Sh AUTHORS
-Written and maintained by 1000+ contributors:
-.Sy https://github.com/nodejs/node/blob/HEAD/AUTHORS

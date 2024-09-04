@@ -2,16 +2,16 @@
 
 This directory contains modules used to test the Node.js implementation.
 
-## Table of Contents
+## Table of contents
 
 * [ArrayStream module](#arraystream-module)
 * [Benchmark module](#benchmark-module)
+* [Child process module](#child-process-module)
 * [Common module API](#common-module-api)
 * [Countdown module](#countdown-module)
 * [CPU Profiler module](#cpu-profiler-module)
 * [Debugger module](#debugger-module)
 * [DNS module](#dns-module)
-* [Duplex pair helper](#duplex-pair-helper)
 * [Environment variables](#environment-variables)
 * [Fixtures module](#fixtures-module)
 * [Heap dump checker module](#heap-dump-checker-module)
@@ -19,13 +19,14 @@ This directory contains modules used to test the Node.js implementation.
 * [HTTP2 module](#http2-module)
 * [Internet module](#internet-module)
 * [ongc module](#ongc-module)
+* [process-exit-code-test-cases module](#process-exit-code-test-cases-module)
 * [Report module](#report-module)
 * [tick module](#tick-module)
 * [tmpdir module](#tmpdir-module)
 * [UDP pair helper](#udp-pair-helper)
 * [WPT module](#wpt-module)
 
-## Benchmark Module
+## Benchmark module
 
 The `benchmark` module is used by tests to run benchmarks.
 
@@ -35,7 +36,51 @@ The `benchmark` module is used by tests to run benchmarks.
 * `env` [\<Object>][<Object>] Environment variables to be applied during the
   run.
 
-## Common Module API
+## Child Process module
+
+The `child_process` module is used by tests that launch child processes.
+
+### `spawnSyncAndExit(command[, args][, spawnOptions], expectations)`
+
+Spawns a child process synchronously using [`child_process.spawnSync()`][] and
+check if it runs in the way expected. If it does not, print the stdout and
+stderr output from the child process and additional information about it to
+the stderr of the current process before throwing and error. This helps
+gathering more information about test failures coming from child processes.
+
+* `command`, `args`, `spawnOptions` See [`child_process.spawnSync()`][]
+* `expectations` [\<Object>][<Object>]
+  * `status` [\<number>][<number>] Expected `child.status`
+  * `signal` [\<string>][<string>] | `null` Expected `child.signal`
+  * `stderr` [\<string>][<string>] | [\<RegExp>][<RegExp>] |
+    [\<Function>][<Function>] Optional. If it's a string, check that the output
+    to the stderr of the child process is exactly the same as the string. If
+    it's a regular expression, check that the stderr matches it. If it's a
+    function, invoke it with the stderr output as a string and check
+    that it returns true. The function can just throw errors (e.g. assertion
+    errors) to provide more information if the check fails.
+  * `stdout` [\<string>][<string>] | [\<RegExp>][<RegExp>] |
+    [\<Function>][<Function>] Optional. Similar to `stderr` but for the stdout.
+  * `trim` [\<boolean>][<boolean>] Optional. Whether this method should trim
+    out the whitespace characters when checking `stderr` and `stdout` outputs.
+    Defaults to `false`.
+* return [\<Object>][<Object>]
+  * `child` [\<ChildProcess>][<ChildProcess>] The child process returned by
+    [`child_process.spawnSync()`][].
+  * `stderr` [\<string>][<string>] The output from the child process to stderr.
+  * `stdout` [\<string>][<string>] The output from the child process to stdout.
+
+### `spawnSyncAndExitWithoutError(command[, args][, spawnOptions])`
+
+Similar to `expectSyncExit()` with the `status` expected to be 0 and
+`signal` expected to be `null`.
+
+### `spawnSyncAndAssert(command[, args][, spawnOptions], expectations)`
+
+Similar to `spawnSyncAndExitWithoutError()`, but with an additional
+`expectations` parameter.
+
+## Common module API
 
 The `common` module is used by tests for consistency across repeated
 tasks.
@@ -237,7 +282,7 @@ Platform check for Linux.
 
 Platform check for Linux on PowerPC.
 
-### `isOSX`
+### `isMacOS`
 
 * [\<boolean>][<boolean>]
 
@@ -444,7 +489,7 @@ was compiled with a pointer size smaller than 64 bits.
 Skip the rest of the tests in the current file when not running on a main
 thread.
 
-## ArrayStream Module
+## ArrayStream module
 
 The `ArrayStream` module provides a simple `Stream` that pushes elements from
 a given array.
@@ -459,7 +504,7 @@ stream.run(['a', 'b', 'c']);
 
 It can be used within tests as a simple mock stream.
 
-## Countdown Module
+## Countdown module
 
 The `Countdown` module provides a simple countdown mechanism for tests that
 require a particular action to be taken after a given number of completed
@@ -563,7 +608,7 @@ used to interact with the `node inspect` CLI. These functions are:
 * `stepCommand()`
 * `quit()`
 
-## `DNS` Module
+## `DNS` module
 
 The `DNS` module provides utilities related to the `dns` built-in module.
 
@@ -624,14 +669,6 @@ Reads a Domain String and returns a Buffer containing the domain.
 Takes in a parsed Object and writes its fields to a DNS packet as a Buffer
 object.
 
-## Duplex pair helper
-
-The `common/duplexpair` module exports a single function `makeDuplexPair`,
-which returns an object `{ clientSide, serverSide }` where each side is a
-`Duplex` stream connected to the other side.
-
-There is no difference between client or server side beyond their names.
-
 ## Environment variables
 
 The behavior of the Node.js test suite can be altered using the following
@@ -662,7 +699,7 @@ A comma-separated list of variables names that are appended to the global
 variable allowlist. Alternatively, if `NODE_TEST_KNOWN_GLOBALS` is set to `'0'`,
 global leak detection is disabled.
 
-## Fixtures Module
+## Fixtures module
 
 The `common/fixtures` module provides convenience methods for working with
 files in the `test/fixtures` directory.
@@ -678,6 +715,12 @@ The absolute path to the `test/fixtures/` directory.
 * `...args` [\<string>][<string>]
 
 Returns the result of `path.join(fixtures.fixturesDir, ...args)`.
+
+### `fixtures.fileURL(...args)`
+
+* `...args` [\<string>][<string>]
+
+Returns the result of `url.pathToFileURL(fixtures.path(...args))`.
 
 ### `fixtures.readSync(args[, enc])`
 
@@ -731,7 +774,7 @@ validateSnapshotNodes('TLSWRAP', [
 ]);
 ```
 
-## hijackstdio Module
+## hijackstdio module
 
 The `hijackstdio` module provides utility functions for temporarily redirecting
 `stdout` and `stderr` output.
@@ -779,7 +822,7 @@ original state after calling [`hijackstdio.hijackStdErr()`][].
 Restore the original `process.stdout.write()`. Used to restore `stdout` to its
 original state after calling [`hijackstdio.hijackStdOut()`][].
 
-## HTTP/2 Module
+## HTTP/2 module
 
 The http2.js module provides a handful of utilities for creating mock HTTP/2
 frames for testing of HTTP/2 endpoints
@@ -898,7 +941,7 @@ upon initial establishment of a connection.
 socket.write(http2.kClientMagic);
 ```
 
-## Internet Module
+## Internet module
 
 The `common/internet` module provides utilities for working with
 internet-related tests.
@@ -932,7 +975,7 @@ via `NODE_TEST_*` environment variables. For example, to configure
 `internet.addresses.INET_HOST`, set the environment
 variable `NODE_TEST_INET_HOST` to a specified host.
 
-## ongc Module
+## ongc module
 
 The `ongc` module allows a garbage collection listener to be installed. The
 module exports a single `onGC()` function.
@@ -960,7 +1003,28 @@ a full `setImmediate()` invocation passes.
 `listener` is an object to make it easier to use a closure; the target object
 should not be in scope when `listener.ongc()` is created.
 
-## Report Module
+## process-exit-code-test-cases module
+
+The `process-exit-code-test-cases` module provides a set of shared test cases
+for testing the exit codes of the `process` object. The test cases are shared
+between `test/parallel/test-process-exit-code.js` and
+`test/parallel/test-worker-exit-code.js`.
+
+### `getTestCases(isWorker)`
+
+* `isWorker` [\<boolean>][<boolean>]
+* return [\<Array>][<Array>]
+
+Returns an array of test cases for testing the exit codes of the `process`. Each
+test case is an object with a `func` property that is a function that runs the
+test case, a `result` property that is the expected exit code, and sometimes an
+`error` property that is a regular expression that the error message should
+match when the test case is run in a worker thread.
+
+The `isWorker` parameter is used to adjust the test cases for worker threads.
+The default value is `false`.
+
+## Report module
 
 The `report` module provides helper functions for testing diagnostic reporting
 functionality.
@@ -991,7 +1055,25 @@ Validates the schema of a diagnostic report file whose path is specified in
 Validates the schema of a diagnostic report whose content is specified in
 `report`. If the report fails validation, an exception is thrown.
 
-## tick Module
+## SEA Module
+
+The `sea` module provides helper functions for testing Single Executable
+Application functionality.
+
+### `skipIfSingleExecutableIsNotSupported()`
+
+Skip the rest of the tests if single executable applications are not supported
+in the current configuration.
+
+### `generateSEA(targetExecutable, sourceExecutable, seaBlob, verifyWorkflow)`
+
+Copy `sourceExecutable` to `targetExecutable`, use postject to inject `seaBlob`
+into `targetExecutable` and sign it if necessary.
+
+If `verifyWorkflow` is false (default) and any of the steps fails,
+it skips the tests. Otherwise, an error is thrown.
+
+## tick module
 
 The `tick` module provides a helper function that can be used to call a callback
 after a given number of event loop "ticks".
@@ -1001,7 +1083,7 @@ after a given number of event loop "ticks".
 * `x` [\<number>][<number>] Number of event loop "ticks".
 * `cb` [\<Function>][<Function>] A callback function.
 
-## tmpdir Module
+## tmpdir module
 
 The `tmpdir` module supports the use of a temporary directory for testing.
 
@@ -1011,9 +1093,22 @@ The `tmpdir` module supports the use of a temporary directory for testing.
 
 The realpath of the testing temporary directory.
 
-### `refresh()`
+### `fileURL([...paths])`
 
-Deletes and recreates the testing temporary directory.
+* `...paths` [\<string>][<string>]
+* return [\<URL>][<URL>]
+
+Resolves a sequence of paths into absolute url in the temporary directory.
+
+When called without arguments, returns absolute url of the testing
+temporary directory with explicit trailing `/`.
+
+### `refresh(useSpawn)`
+
+* `useSpawn` [\<boolean>][<boolean>] default = false
+
+Deletes and recreates the testing temporary directory. When `useSpawn` is true
+this action is performed using `child_process.spawnSync`.
 
 The first time `refresh()` runs, it adds a listener to process `'exit'` that
 cleans the temporary directory. Thus, every file under `tmpdir.path` needs to
@@ -1026,6 +1121,13 @@ It is usually only necessary to call `refresh()` once in a test file.
 Avoid calling it more than once in an asynchronous context as one call
 might refresh the temporary directory of a different context, causing
 the test to fail somewhat mysteriously.
+
+### `resolve([...paths])`
+
+* `...paths` [\<string>][<string>]
+* return [\<string>][<string>]
+
+Resolves a sequence of paths into absolute path in the temporary directory.
 
 ### `hasEnoughSpace(size)`
 
@@ -1049,7 +1151,7 @@ is an `FakeUDPWrap` connected to the other side.
 
 There is no difference between client or server side beyond their names.
 
-## WPT Module
+## WPT module
 
 ### `harness`
 
@@ -1069,16 +1171,19 @@ See [the WPT tests README][] for details.
 [<ArrayBufferView>]: https://developer.mozilla.org/en-US/docs/Web/API/ArrayBufferView
 [<Buffer>]: https://nodejs.org/api/buffer.html#buffer_class_buffer
 [<BufferSource>]: https://developer.mozilla.org/en-US/docs/Web/API/BufferSource
+[<ChildProcess>]: ../../doc/api/child_process.md#class-childprocess
 [<Error>]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error
 [<Function>]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function
 [<Object>]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object
 [<RegExp>]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp
+[<URL>]: https://developer.mozilla.org/en-US/docs/Web/API/URL
 [<any>]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#Data_types
 [<bigint>]: https://github.com/tc39/proposal-bigint
 [<boolean>]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#Boolean_type
 [<number>]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#Number_type
 [<string>]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Data_structures#String_type
 [Web Platform Tests]: https://github.com/web-platform-tests/wpt
+[`child_process.spawnSync()`]: ../../doc/api/child_process.md#child_processspawnsynccommand-args-options
 [`hijackstdio.hijackStdErr()`]: #hijackstderrlistener
 [`hijackstdio.hijackStdOut()`]: #hijackstdoutlistener
 [internationalization]: ../../doc/api/intl.md
