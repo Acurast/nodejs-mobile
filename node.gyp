@@ -1040,22 +1040,6 @@
         'test/fuzzers/fuzz_env.cc',
       ],
       'conditions': [
-        # nodejs-mobile patch to mention iOS:
-        [ 'node_use_dtrace=="true" and OS!="mac" and OS!="ios" and OS!="linux"', {
-          'actions': [
-            {
-              'action_name': 'node_dtrace_provider_o',
-              'inputs': [
-                '<(obj_dir)/<(node_lib_target_name)/src/node_dtrace.o',
-              ],
-              'outputs': [
-                '<(obj_dir)/<(node_lib_target_name)/src/node_dtrace_provider.o'
-              ],
-              'action': [ 'dtrace', '-G', '-xnolibs', '-s', 'src/node_provider.d',
-                '<@(_inputs)', '-o', '<@(_outputs)' ]
-            }
-          ]
-        }],
         ['OS=="linux"', {
           'ldflags': [ '-fsanitize=fuzzer' ]
         }],
