@@ -376,7 +376,7 @@
           }],
         ],
       }],
-      ['ubsan == 1 and OS != "mac" and OS != "zos"', {
+      ['ubsan == 1 and OS != "mac" and OS != "ios" and OS != "zos"', {
         'cflags+': [
           '-fno-omit-frame-pointer',
           '-fsanitize=undefined',
@@ -385,7 +385,7 @@
         'cflags!': [ '-fno-omit-frame-pointer' ],
         'ldflags': [ '-fsanitize=undefined' ],
       }],
-      ['ubsan == 1 and OS == "mac"', {
+      ['ubsan == 1 and (OS == "mac" or OS == "ios")', {
         'xcode_settings': {
           'OTHER_CFLAGS+': [
             '-fno-omit-frame-pointer',
@@ -458,7 +458,7 @@
           'BUILDING_UV_SHARED=1',
         ],
       }],
-      [ 'OS in "linux freebsd openbsd solaris aix os400"', {
+      [ 'OS in "linux freebsd openbsd solaris android aix os400"', {
         'cflags': [ '-pthread' ],
         'ldflags': [ '-pthread' ],
       }],
