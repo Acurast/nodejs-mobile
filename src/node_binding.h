@@ -131,6 +131,7 @@ class DLib {
 // use the __attribute__((constructor)). Need to
 // explicitly call the _register* functions.
 void RegisterBuiltinBindings();
+void UnregisterBuiltinBindings();
 // Create per-isolate templates for the internal bindings.
 void CreateInternalBindingTemplates(IsolateData* isolate_data);
 void GetInternalBinding(const v8::FunctionCallbackInfo<v8::Value>& args);

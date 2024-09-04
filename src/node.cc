@@ -157,6 +157,11 @@ unsigned int reverted_cve = 0;
 // if it is safe to call v8::Isolate::TryGetCurrent().
 bool v8_initialized = false;
 
+
+char** args_mem = nullptr;
+
+Environment* tempEnv = nullptr;
+
 // node_internals.h
 // process-relative uptime base in nanoseconds, initialized in node::Start()
 uint64_t node_start_time;
@@ -315,6 +320,7 @@ std::optional<StartExecutionCallbackInfo> CallbackInfoFromArray(
 }
 
 MaybeLocal<Value> StartExecution(Environment* env, StartExecutionCallback cb) {
+  per_process::tempEnv = env;
   InternalCallbackScope callback_scope(
       env,
       Object::New(env->isolate()),
@@ -1075,7 +1081,6 @@ InitializeOncePerProcessInternal(const std::vector<std::string>& args,
       return result;
     }
   }
-
   if (!(flags & ProcessInitializationFlags::kNoInitOpenSSL)) {
 #if HAVE_OPENSSL
 #ifndef OPENSSL_IS_BORINGSSL
@@ -1196,6 +1201,7 @@ InitializeOncePerProcessInternal(const std::vector<std::string>& args,
   if (!(flags & ProcessInitializationFlags::kNoInitializeV8)) {
     V8::Initialize();
   }
+<<<<<<< HEAD
 
   if (!(flags & ProcessInitializationFlags::kNoInitializeCppgc)) {
     v8::PageAllocator* allocator = nullptr;
@@ -1236,6 +1242,8 @@ InitializeOncePerProcessInternal(const std::vector<std::string>& args,
   }
 #endif  // NODE_USE_V8_WASM_TRAP_HANDLER
 
+=======
+>>>>>>> 903309f51e1c9e78c01a368b4ee04df703961787
   performance::performance_v8_start = PERFORMANCE_NOW();
   per_process::v8_initialized = true;
 
@@ -1270,6 +1278,7 @@ void TearDownOncePerProcess() {
   }
 #endif
 
+  init_called.store(false);
   if (!(flags & ProcessInitializationFlags::kNoInitializeNodeV8Platform)) {
     V8::DisposePlatform();
     // uv_run cannot be called from the time before the beforeExit callback
@@ -1280,7 +1289,15 @@ void TearDownOncePerProcess() {
     // will never be fully cleaned up.
     per_process::v8_platform.Dispose();
   }
+  binding::UnregisterBuiltinBindings();
+  // Remove arguments
+  delete[] per_process::args_mem;
+  per_process::args_mem = nullptr;
+  per_process::tempEnv = nullptr;
 }
+
+ErrorCapture* error_capture;
+ErrorCapture::~ErrorCapture() {}
 
 ExitCode GenerateAndWriteSnapshotData(const SnapshotData** snapshot_data_ptr,
                                       const InitializationResultImpl* result) {
@@ -1447,6 +1464,7 @@ static ExitCode StartInternal(int argc, char** argv) {
 
   // Hack around with the argv pointer. Used for process.title = "blah".
   argv = uv_setup_args(argc, argv);
+  per_process::args_mem = argv;
 
   std::unique_ptr<InitializationResultImpl> result =
       InitializeOncePerProcessInternal(
@@ -1505,11 +1523,24 @@ static ExitCode StartInternal(int argc, char** argv) {
   return main_instance.Run();
 }
 
+<<<<<<< HEAD
 int Start(int argc, char** argv) {
 #ifndef DISABLE_SINGLE_EXECUTABLE_APPLICATION
   std::tie(argc, argv) = sea::FixupArgsForSEA(argc, argv);
 #endif
   return static_cast<int>(StartInternal(argc, argv));
+=======
+int Stop() {
+  if (per_process::tempEnv != nullptr && !per_process::tempEnv->is_stopping()) {
+    Environment *env = per_process::tempEnv;
+    return Stop(env);
+  }
+  return 0;
+}
+
+int Stop(Environment* env) {
+  return Stop(env, StopFlags::kNoFlags);
+>>>>>>> 903309f51e1c9e78c01a368b4ee04df703961787
 }
 
 int Stop(Environment* env, StopFlags::Flags flags) {

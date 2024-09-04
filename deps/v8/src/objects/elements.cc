@@ -5356,23 +5356,20 @@ void CopyTypedArrayElementsSlice(Address raw_source, Address raw_destination,
 }
 
 void ElementsAccessor::InitializeOncePerProcess() {
-  static ElementsAccessor* accessor_array[] = {
-#define ACCESSOR_ARRAY(Class, Kind, Store) new Class(),
-      ELEMENTS_LIST(ACCESSOR_ARRAY)
-#undef ACCESSOR_ARRAY
-  };
-
-  static_assert((sizeof(accessor_array) / sizeof(*accessor_array)) ==
-                kElementsKindCount);
-
-  elements_accessors_ = accessor_array;
+  elements_accessors_ = new ElementsAccessor*[kElementsKindCount];
+  int i = 0;
+#define INIT_ACCESSOR(Class, Kind, Store) elements_accessors_[i++] = new Class();
+ELEMENTS_LIST(INIT_ACCESSOR)
+#undef INCREMENT
+#undef INIT_ACCESSOR
 }
 
 void ElementsAccessor::TearDown() {
   if (elements_accessors_ == nullptr) return;
-#define ACCESSOR_DELETE(Class, Kind, Store) delete elements_accessors_[Kind];
+#define ACCESSOR_DELETE(Class, Kind, Store) delete elements_accessors_[Kind]; elements_accessors_[Kind] = nullptr;
   ELEMENTS_LIST(ACCESSOR_DELETE)
 #undef ACCESSOR_DELETE
+  delete elements_accessors_;
   elements_accessors_ = nullptr;
 }
 

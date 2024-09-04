@@ -3,6 +3,7 @@
 #include <sstream>
 
 #include "debug_utils-inl.h"
+#include "node.h"
 #include "node_errors.h"
 #include "node_external_reference.h"
 #include "node_internals.h"
@@ -438,6 +439,11 @@ static void ReportFatalException(Environment* env,
     env->inspector_agent()->ReportUncaughtException(error, message);
 #endif
   };
+
+  node::Utf8Value captured_message(env->isolate(), message->Get());
+  if (node::error_capture != nullptr) {
+    node::error_capture->set_error(captured_message.ToString());
+  }
 
   Local<Value> arrow;
   Local<Value> stack_trace;
@@ -1260,7 +1266,11 @@ void TriggerUncaughtException(Isolate* isolate,
 
   // If the global uncaught exception handler sets process.exitCode,
   // exit with that code. Otherwise, exit with `ExitCode::kGenericUserError`.
-  env->Exit(env->exit_code(ExitCode::kGenericUserError));
+  // env->Exit(env->exit_code(ExitCode::kGenericUserError));
+  
+  if (node::error_capture != nullptr) {
+    node::error_capture->on_error();
+  }
 }
 
 void TriggerUncaughtException(Isolate* isolate, const v8::TryCatch& try_catch) {

@@ -1,0 +1,82 @@
+image: docker:latest
+
+variables:
+  GOOGLE_TAG: eu.gcr.io/papers-kubernetes/$CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME:$CI_COMMIT_SHA
+  GOOGLE_TAG_LATEST: eu.gcr.io/papers-kubernetes/$CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME:latest
+
+stages:
+  - prepare
+  - build
+
+prepare:
+  stage: prepare
+  script:
+    - docker build -t $GOOGLE_TAG .
+  tags:
+    - docker
+
+build-android-arm64:
+  stage: build
+  when: manual
+  timeout: 2h
+  script:
+    - set +e
+    - docker run --name build-android-arm64-$CI_COMMIT_SHA $GOOGLE_TAG /bin/bash -c "./tools/android_build.sh ./android-ndk-r26d 30 arm64 > logs.txt 2> >(tee -a logs.txt >&2)"
+    - BUILD_EXIT_CODE=$?
+    - docker cp build-android-arm64-$CI_COMMIT_SHA:/nodejs/out_android/arm64-v8a arm64 || true
+    - docker cp build-android-arm64-$CI_COMMIT_SHA:/nodejs/logs.txt logs.txt || true
+    - set -e
+    - exit $BUILD_EXIT_CODE
+  after_script:
+    - docker rm -f build-android-arm64-$CI_COMMIT_SHA
+  tags:
+    - docker
+  artifacts:
+    paths:
+      - arm64
+      - logs.txt
+    when: always
+
+build-android-arm:
+  stage: build
+  when: manual
+  timeout: 2h
+  script:
+    - set +e
+    - docker run --name build-android-arm-$CI_COMMIT_SHA $GOOGLE_TAG /bin/bash -c "./tools/android_build.sh ./android-ndk-r26d 30 arm > logs.txt 2> >(tee -a logs.txt >&2)"
+    - BUILD_EXIT_CODE=$?
+    - docker cp build-android-arm-$CI_COMMIT_SHA:/nodejs/out_android/armeabi-v7a arm || true
+    - docker cp build-android-arm-$CI_COMMIT_SHA:/nodejs/logs.txt logs.txt || true
+    - set -e
+    - exit $BUILD_EXIT_CODE
+  after_script:
+    - docker rm -f build-android-arm-$CI_COMMIT_SHA
+  tags:
+    - docker
+  artifacts:
+    paths:
+      - arm
+      - logs.txt
+    when: always
+
+build-ios-arm:
+  stage: build
+  when: manual
+  timeout: 2h
+  allow_failure: true
+  script:
+    - export DEVELOPER_DIR=$XCODE_PATH
+    - ./tools/ios_framework_prepare_arm.sh
+  tags:
+    - ios
+
+build-ios:
+  stage: build
+  when: manual
+  timeout: 2h
+  allow_failure: true
+  script:
+    - export DEVELOPER_DIR=$XCODE_PATH
+    - ./tools/ios_framework_prepare.sh
+  tags:
+    - ios

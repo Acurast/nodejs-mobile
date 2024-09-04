@@ -223,7 +223,6 @@ typedef intptr_t ssize_t;
 # include <sys/types.h>  // size_t, ssize_t
 #endif  // _WIN32
 
-
 namespace node {
 
 class IsolateData;
@@ -290,6 +289,17 @@ enum Flags : uint32_t {
 };
 }  // namespace StopFlags
 
+class NODE_EXTERN ErrorCapture {
+ public:
+  virtual ~ErrorCapture() = 0;
+
+  virtual const char* error() = 0;    
+  virtual void set_error(std::string error) = 0;
+  virtual void on_error() = 0;
+};
+
+extern NODE_EXTERN ErrorCapture* error_capture;
+
 class NODE_EXTERN InitializationResult {
  public:
   virtual ~InitializationResult() = default;
@@ -325,6 +335,7 @@ NODE_EXTERN int Start(int argc, char* argv[]);
 
 // Tear down Node.js while it is running (there are active handles
 // in the loop and / or actively executing JavaScript code).
+NODE_EXTERN int Stop();
 NODE_EXTERN int Stop(Environment* env,
                      StopFlags::Flags flags = StopFlags::kNoFlags);
 

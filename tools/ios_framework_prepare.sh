@@ -57,7 +57,7 @@ declare -a outputs_x64=("${outputs_common[@]}" "${outputs_x64_only[@]}")
 declare -a outputs_arm64=("${outputs_common[@]}" "${outputs_arm64_only[@]}")
 
 # Compile Node.js for iOS arm64 devices
-make clean
+make clean > /dev/null 2>&1
 GYP_DEFINES="target_arch=arm64 host_os=mac target_os=ios"
 export GYP_DEFINES
 ./configure \
@@ -70,7 +70,7 @@ export GYP_DEFINES
   --v8-options=--jitless \
   --without-node-code-cache \
   --without-node-snapshot
-make -j$(getconf _NPROCESSORS_ONLN)
+make -j$(getconf _NPROCESSORS_ONLN) > /dev/null 2>&1
 
 # Move compilation outputs
 mkdir -p $TARGET_LIBRARY_PATH/arm64-device
@@ -79,7 +79,7 @@ for output_file in "${outputs_arm64[@]}"; do
 done
 
 # Compile Node.js for iOS arm64 simulator
-make clean
+make clean > /dev/null 2>&1
 GYP_DEFINES="target_arch=arm64 host_os=mac target_os=ios"
 export GYP_DEFINES
 ./configure \
@@ -93,7 +93,7 @@ export GYP_DEFINES
   --without-node-code-cache \
   --without-node-snapshot \
   --ios-simulator
-make -j$(getconf _NPROCESSORS_ONLN)
+make -j$(getconf _NPROCESSORS_ONLN) > /dev/null 2>&1
 
 # Move compilation outputs
 mkdir -p $TARGET_LIBRARY_PATH/arm64-simulator
@@ -105,7 +105,7 @@ done
 HOST_ARCH=$(arch)
 if [ "$HOST_ARCH" = "arm64" ]; then
   # Build with the command arch -x86_64 on arm64.
-  make clean
+  make clean > /dev/null 2>&1
   GYP_DEFINES="target_arch=x64 host_os=mac target_os=ios"
   export GYP_DEFINES
   arch -x86_64 ./configure \
@@ -118,9 +118,9 @@ if [ "$HOST_ARCH" = "arm64" ]; then
     --v8-options=--jitless \
     --without-node-code-cache \
     --without-node-snapshot
-  arch -x86_64 make -j$(getconf _NPROCESSORS_ONLN)
+  arch -x86_64 make -j$(getconf _NPROCESSORS_ONLN) > /dev/null 2>&1
 else
-  make clean
+  make clean > /dev/null 2>&1
   GYP_DEFINES="target_arch=x64 host_os=mac target_os=ios"
   export GYP_DEFINES
   ./configure \
@@ -133,7 +133,7 @@ else
     --v8-options=--jitless \
     --without-node-code-cache \
     --without-node-snapshot
-  make -j$(getconf _NPROCESSORS_ONLN)
+  make -j$(getconf _NPROCESSORS_ONLN) > /dev/null 2>&1
 fi
 
 # Move compilation outputs
@@ -182,17 +182,21 @@ for output_file in "${outputs_x64[@]}"; do
 done
 xcodebuild build \
   -project $NODELIB_PROJECT_PATH/NodeMobile.xcodeproj \
-  -target "NodeMobile" \
+  -target "NodeMobile-x64" \
   -configuration Release \
   -arch x86_64 \
   -sdk "iphonesimulator" \
   SYMROOT=$FRAMEWORK_TARGET_DIR/iphonesimulator-x64
 
 # Join both simulator outputs into one
-mkdir -p $FRAMEWORK_TARGET_DIR/iphonesimulator-universal/NodeMobile.framework
+mkdir -p $FRAMEWORK_TARGET_DIR/iphonesimulator-universal
+cp -R \
+  $FRAMEWORK_TARGET_DIR/iphonesimulator-arm64/Release-iphonesimulator/NodeMobile.framework \
+  $FRAMEWORK_TARGET_DIR/iphonesimulator-universal/NodeMobile.framework
+rm -f $FRAMEWORK_TARGET_DIR/iphonesimulator-universal/NodeMobile.framework/NodeMobile
 lipo -create \
   $FRAMEWORK_TARGET_DIR/iphonesimulator-arm64/Release-iphonesimulator/NodeMobile.framework/NodeMobile \
-  $FRAMEWORK_TARGET_DIR/iphonesimulator-x64/Release-iphonesimulator/NodeMobile.framework/NodeMobile \
+  $FRAMEWORK_TARGET_DIR/iphonesimulator-x64/Release-iphonesimulator/NodeMobile-x64.framework/NodeMobile-x64 \
   -output $FRAMEWORK_TARGET_DIR/iphonesimulator-universal/NodeMobile.framework/NodeMobile
 
 # Create a .xcframework combining both iphoneos and iphonesimulator

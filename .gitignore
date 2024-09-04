@@ -24,6 +24,7 @@
 !.mailmap
 !.nycrc
 !.yamllint.yaml
+!.gitlab-ci.yml
 
 # === Rules for root dir ===
 /core

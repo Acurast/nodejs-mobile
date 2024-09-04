@@ -84,6 +84,7 @@ NodeMainInstance::~NodeMainInstance() {
     platform_->UnregisterIsolate(isolate_);
   }
   isolate_->Dispose();
+  isolate_ = nullptr;
 }
 
 ExitCode NodeMainInstance::Run() {

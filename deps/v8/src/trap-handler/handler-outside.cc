@@ -261,7 +261,13 @@ bool EnableTrapHandler(bool use_v8_handler) {
   bool can_enable =
       g_can_enable_trap_handler.exchange(false, std::memory_order_relaxed);
   // EnableTrapHandler called twice, or after IsTrapHandlerEnabled.
-  TH_CHECK(can_enable);
+  //TH_CHECK(can_enable); // TODO: iOSBuild
+  /*if (!can_enable) {
+    if (!V8_TRAP_HANDLER_SUPPORTED) {
+      return false;
+    }
+    return true;
+  }*/
 
   if (!V8_TRAP_HANDLER_SUPPORTED) {
     return false;

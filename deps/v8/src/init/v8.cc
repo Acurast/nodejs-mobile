@@ -315,6 +315,7 @@ void V8::DisposePlatform() {
 
   platform_ = nullptr;
   AdvanceStartupState(V8StartupState::kPlatformDisposed);
+  v8_startup_state_.store(V8StartupState::kIdle);
 }
 
 v8::Platform* V8::GetCurrentPlatform() {

@@ -699,6 +699,10 @@ void RegisterBuiltinBindings() {
 #undef V
 }
 
+void UnregisterBuiltinBindings() {
+  modlist_internal = nullptr;
+}
+
 void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(GetLinkedBinding);
   registry->Register(GetInternalBinding);
