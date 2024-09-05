@@ -1,8 +1,10 @@
 import fs from 'fs';
-import path$1 from 'path';
-import { fileURLToPath, pathToFileURL, URL as URL$1 } from 'url';
-import proc from 'process';
+import path$2 from 'path';
+import { pathToFileURL } from 'url';
+import path$1 from 'node:path';
 import process$1 from 'node:process';
+import { fileURLToPath } from 'node:url';
+import fs$1 from 'node:fs';
 import os from 'node:os';
 import tty from 'node:tty';
 
@@ -17,18 +19,6 @@ var commonjsGlobal = typeof globalThis !== 'undefined' ? globalThis : typeof win
 function getDefaultExportFromCjs (x) {
 	return x && x.__esModule && Object.prototype.hasOwnProperty.call(x, 'default') ? x['default'] : x;
 }
-
-/*!
- * Determine if an object is a Buffer
- *
- * @author   Feross Aboukhadijeh <https://feross.org>
- * @license  MIT
- */
-var isBuffer = function isBuffer (obj) {
-  return obj != null && obj.constructor != null &&
-    typeof obj.constructor.isBuffer === 'function' && obj.constructor.isBuffer(obj)
-};
-var buffer$1 = getDefaultExportFromCjs(isBuffer);
 
 var hasOwn = Object.prototype.hasOwnProperty;
 var toStr = Object.prototype.toString;
@@ -115,6 +105,8 @@ var extend$1 = function extend() {
 };
 var extend$2 = getDefaultExportFromCjs(extend$1);
 
+function ok$1() {}
+
 function isPlainObject(value) {
 	if (typeof value !== 'object' || value === null) {
 		return false;
@@ -183,7 +175,7 @@ function wrap(middleware, callback) {
       return done(exception)
     }
     if (!fnExpectsCallback) {
-      if (result instanceof Promise) {
+      if (result && result.then && typeof result.then === 'function') {
         result.then(then, done);
       } else if (result instanceof Error) {
         done(result);
@@ -208,10 +200,10 @@ function stringifyPosition(value) {
     return ''
   }
   if ('position' in value || 'type' in value) {
-    return position(value.position)
+    return position$1(value.position)
   }
   if ('start' in value || 'end' in value) {
-    return position(value)
+    return position$1(value)
   }
   if ('line' in value || 'column' in value) {
     return point$2(value)
@@ -221,7 +213,7 @@ function stringifyPosition(value) {
 function point$2(point) {
   return index(point && point.line) + ':' + index(point && point.column)
 }
-function position(pos) {
+function position$1(pos) {
   return point$2(pos && pos.start) + '-' + point$2(pos && pos.end)
 }
 function index(value) {
@@ -229,57 +221,85 @@ function index(value) {
 }
 
 class VFileMessage extends Error {
-  constructor(reason, place, origin) {
-    const parts = [null, null];
-    let position = {
-      start: {line: null, column: null},
-      end: {line: null, column: null}
-    };
+  constructor(causeOrReason, optionsOrParentOrPlace, origin) {
     super();
-    if (typeof place === 'string') {
-      origin = place;
-      place = undefined;
+    if (typeof optionsOrParentOrPlace === 'string') {
+      origin = optionsOrParentOrPlace;
+      optionsOrParentOrPlace = undefined;
     }
-    if (typeof origin === 'string') {
+    let reason = '';
+    let options = {};
+    let legacyCause = false;
+    if (optionsOrParentOrPlace) {
+      if (
+        'line' in optionsOrParentOrPlace &&
+        'column' in optionsOrParentOrPlace
+      ) {
+        options = {place: optionsOrParentOrPlace};
+      }
+      else if (
+        'start' in optionsOrParentOrPlace &&
+        'end' in optionsOrParentOrPlace
+      ) {
+        options = {place: optionsOrParentOrPlace};
+      }
+      else if ('type' in optionsOrParentOrPlace) {
+        options = {
+          ancestors: [optionsOrParentOrPlace],
+          place: optionsOrParentOrPlace.position
+        };
+      }
+      else {
+        options = {...optionsOrParentOrPlace};
+      }
+    }
+    if (typeof causeOrReason === 'string') {
+      reason = causeOrReason;
+    }
+    else if (!options.cause && causeOrReason) {
+      legacyCause = true;
+      reason = causeOrReason.message;
+      options.cause = causeOrReason;
+    }
+    if (!options.ruleId && !options.source && typeof origin === 'string') {
       const index = origin.indexOf(':');
       if (index === -1) {
-        parts[1] = origin;
+        options.ruleId = origin;
       } else {
-        parts[0] = origin.slice(0, index);
-        parts[1] = origin.slice(index + 1);
+        options.source = origin.slice(0, index);
+        options.ruleId = origin.slice(index + 1);
       }
     }
-    if (place) {
-      if ('type' in place || 'position' in place) {
-        if (place.position) {
-          position = place.position;
-        }
-      }
-      else if ('start' in place || 'end' in place) {
-        position = place;
-      }
-      else if ('line' in place || 'column' in place) {
-        position.start = place;
+    if (!options.place && options.ancestors && options.ancestors) {
+      const parent = options.ancestors[options.ancestors.length - 1];
+      if (parent) {
+        options.place = parent.position;
       }
     }
-    this.name = stringifyPosition(place) || '1:1';
-    this.message = typeof reason === 'object' ? reason.message : reason;
-    this.stack = '';
-    if (typeof reason === 'object' && reason.stack) {
-      this.stack = reason.stack;
-    }
-    this.reason = this.message;
-    this.fatal;
-    this.line = position.start.line;
-    this.column = position.start.column;
-    this.position = position;
-    this.source = parts[0];
-    this.ruleId = parts[1];
+    const start =
+      options.place && 'start' in options.place
+        ? options.place.start
+        : options.place;
+    this.ancestors = options.ancestors || undefined;
+    this.cause = options.cause || undefined;
+    this.column = start ? start.column : undefined;
+    this.fatal = undefined;
     this.file;
+    this.message = reason;
+    this.line = start ? start.line : undefined;
+    this.name = stringifyPosition(options.place) || '1:1';
+    this.place = options.place || undefined;
+    this.reason = this.message;
+    this.ruleId = options.ruleId || undefined;
+    this.source = options.source || undefined;
+    this.stack =
+      legacyCause && options.cause && typeof options.cause.stack === 'string'
+        ? options.cause.stack
+        : '';
     this.actual;
     this.expected;
-    this.url;
     this.note;
+    this.url;
   }
 }
 VFileMessage.prototype.file = '';
@@ -287,43 +307,55 @@ VFileMessage.prototype.name = '';
 VFileMessage.prototype.reason = '';
 VFileMessage.prototype.message = '';
 VFileMessage.prototype.stack = '';
-VFileMessage.prototype.fatal = null;
-VFileMessage.prototype.column = null;
-VFileMessage.prototype.line = null;
-VFileMessage.prototype.source = null;
-VFileMessage.prototype.ruleId = null;
-VFileMessage.prototype.position = null;
+VFileMessage.prototype.column = undefined;
+VFileMessage.prototype.line = undefined;
+VFileMessage.prototype.ancestors = undefined;
+VFileMessage.prototype.cause = undefined;
+VFileMessage.prototype.fatal = undefined;
+VFileMessage.prototype.place = undefined;
+VFileMessage.prototype.ruleId = undefined;
+VFileMessage.prototype.source = undefined;
 
 function isUrl(fileUrlOrPath) {
-  return (
+  return Boolean(
     fileUrlOrPath !== null &&
-    typeof fileUrlOrPath === 'object' &&
-    fileUrlOrPath.href &&
-    fileUrlOrPath.origin
+      typeof fileUrlOrPath === 'object' &&
+      'href' in fileUrlOrPath &&
+      fileUrlOrPath.href &&
+      'protocol' in fileUrlOrPath &&
+      fileUrlOrPath.protocol &&
+      fileUrlOrPath.auth === undefined
   )
 }
 
-const order = ['history', 'path', 'basename', 'stem', 'extname', 'dirname'];
+const order =  ([
+  'history',
+  'path',
+  'basename',
+  'stem',
+  'extname',
+  'dirname'
+]);
 class VFile {
   constructor(value) {
     let options;
     if (!value) {
       options = {};
-    } else if (typeof value === 'string' || buffer(value)) {
-      options = {value};
     } else if (isUrl(value)) {
       options = {path: value};
+    } else if (typeof value === 'string' || isUint8Array$2(value)) {
+      options = {value};
     } else {
       options = value;
     }
+    this.cwd = process$1.cwd();
     this.data = {};
-    this.messages = [];
     this.history = [];
-    this.cwd = proc.cwd();
+    this.messages = [];
     this.value;
-    this.stored;
-    this.result;
     this.map;
+    this.result;
+    this.stored;
     let index = -1;
     while (++index < order.length) {
       const prop = order[index];
@@ -342,6 +374,37 @@ class VFile {
       }
     }
   }
+  get basename() {
+    return typeof this.path === 'string' ? path$1.basename(this.path) : undefined
+  }
+  set basename(basename) {
+    assertNonEmpty(basename, 'basename');
+    assertPart(basename, 'basename');
+    this.path = path$1.join(this.dirname || '', basename);
+  }
+  get dirname() {
+    return typeof this.path === 'string' ? path$1.dirname(this.path) : undefined
+  }
+  set dirname(dirname) {
+    assertPath(this.basename, 'dirname');
+    this.path = path$1.join(dirname || '', this.basename);
+  }
+  get extname() {
+    return typeof this.path === 'string' ? path$1.extname(this.path) : undefined
+  }
+  set extname(extname) {
+    assertPart(extname, 'extname');
+    assertPath(this.dirname, 'extname');
+    if (extname) {
+      if (extname.codePointAt(0) !== 46 ) {
+        throw new Error('`extname` must start with `.`')
+      }
+      if (extname.includes('.', 1)) {
+        throw new Error('`extname` cannot contain multiple dots')
+      }
+    }
+    this.path = path$1.join(this.dirname, this.stem + (extname || ''));
+  }
   get path() {
     return this.history[this.history.length - 1]
   }
@@ -354,37 +417,6 @@ class VFile {
       this.history.push(path);
     }
   }
-  get dirname() {
-    return typeof this.path === 'string' ? path$1.dirname(this.path) : undefined
-  }
-  set dirname(dirname) {
-    assertPath(this.basename, 'dirname');
-    this.path = path$1.join(dirname || '', this.basename);
-  }
-  get basename() {
-    return typeof this.path === 'string' ? path$1.basename(this.path) : undefined
-  }
-  set basename(basename) {
-    assertNonEmpty(basename, 'basename');
-    assertPart(basename, 'basename');
-    this.path = path$1.join(this.dirname || '', basename);
-  }
-  get extname() {
-    return typeof this.path === 'string' ? path$1.extname(this.path) : undefined
-  }
-  set extname(extname) {
-    assertPart(extname, 'extname');
-    assertPath(this.dirname, 'extname');
-    if (extname) {
-      if (extname.charCodeAt(0) !== 46 ) {
-        throw new Error('`extname` must start with `.`')
-      }
-      if (extname.includes('.', 1)) {
-        throw new Error('`extname` cannot contain multiple dots')
-      }
-    }
-    this.path = path$1.join(this.dirname, this.stem + (extname || ''));
-  }
   get stem() {
     return typeof this.path === 'string'
       ? path$1.basename(this.path, this.extname)
@@ -395,11 +427,22 @@ class VFile {
     assertPart(stem, 'stem');
     this.path = path$1.join(this.dirname || '', stem + (this.extname || ''));
   }
-  toString(encoding) {
-    return (this.value || '').toString(encoding || undefined)
+  fail(causeOrReason, optionsOrParentOrPlace, origin) {
+    const message = this.message(causeOrReason, optionsOrParentOrPlace, origin);
+    message.fatal = true;
+    throw message
   }
-  message(reason, place, origin) {
-    const message = new VFileMessage(reason, place, origin);
+  info(causeOrReason, optionsOrParentOrPlace, origin) {
+    const message = this.message(causeOrReason, optionsOrParentOrPlace, origin);
+    message.fatal = undefined;
+    return message
+  }
+  message(causeOrReason, optionsOrParentOrPlace, origin) {
+    const message = new VFileMessage(
+      causeOrReason,
+      optionsOrParentOrPlace,
+      origin
+    );
     if (this.path) {
       message.name = this.path + ':' + message.name;
       message.file = this.path;
@@ -408,15 +451,15 @@ class VFile {
     this.messages.push(message);
     return message
   }
-  info(reason, place, origin) {
-    const message = this.message(reason, place, origin);
-    message.fatal = null;
-    return message
-  }
-  fail(reason, place, origin) {
-    const message = this.message(reason, place, origin);
-    message.fatal = true;
-    throw message
+  toString(encoding) {
+    if (this.value === undefined) {
+      return ''
+    }
+    if (typeof this.value === 'string') {
+      return this.value
+    }
+    const decoder = new TextDecoder(encoding || undefined);
+    return decoder.decode(this.value)
   }
 }
 function assertPart(part, name) {
@@ -436,82 +479,213 @@ function assertPath(path, name) {
     throw new Error('Setting `' + name + '` requires `path` to be set too')
   }
 }
-function buffer(value) {
-  return buffer$1(value)
+function isUint8Array$2(value) {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      'byteLength' in value &&
+      'byteOffset' in value
+  )
 }
 
-const unified = base().freeze();
-const own$7 = {}.hasOwnProperty;
-function base() {
-  const transformers = trough();
-  const attachers = [];
-  let namespace = {};
-  let frozen;
-  let freezeIndex = -1;
-  processor.data = data;
-  processor.Parser = undefined;
-  processor.Compiler = undefined;
-  processor.freeze = freeze;
-  processor.attachers = attachers;
-  processor.use = use;
-  processor.parse = parse;
-  processor.stringify = stringify;
-  processor.run = run;
-  processor.runSync = runSync;
-  processor.process = process;
-  processor.processSync = processSync;
-  return processor
-  function processor() {
-    const destination = base();
+const CallableInstance =
+  (
+    (
+      function (property) {
+        const self = this;
+        const constr = self.constructor;
+        const proto =  (
+          constr.prototype
+        );
+        const value = proto[property];
+        const apply = function () {
+          return value.apply(apply, arguments)
+        };
+        Object.setPrototypeOf(apply, proto);
+        return apply
+      }
+    )
+  );
+
+const own$5 = {}.hasOwnProperty;
+class Processor extends CallableInstance {
+  constructor() {
+    super('copy');
+    this.Compiler = undefined;
+    this.Parser = undefined;
+    this.attachers = [];
+    this.compiler = undefined;
+    this.freezeIndex = -1;
+    this.frozen = undefined;
+    this.namespace = {};
+    this.parser = undefined;
+    this.transformers = trough();
+  }
+  copy() {
+    const destination =
+       (
+        new Processor()
+      );
     let index = -1;
-    while (++index < attachers.length) {
-      destination.use(...attachers[index]);
+    while (++index < this.attachers.length) {
+      const attacher = this.attachers[index];
+      destination.use(...attacher);
     }
-    destination.data(extend$2(true, {}, namespace));
+    destination.data(extend$2(true, {}, this.namespace));
     return destination
   }
-  function data(key, value) {
+  data(key, value) {
     if (typeof key === 'string') {
       if (arguments.length === 2) {
-        assertUnfrozen('data', frozen);
-        namespace[key] = value;
-        return processor
+        assertUnfrozen('data', this.frozen);
+        this.namespace[key] = value;
+        return this
       }
-      return (own$7.call(namespace, key) && namespace[key]) || null
+      return (own$5.call(this.namespace, key) && this.namespace[key]) || undefined
     }
     if (key) {
-      assertUnfrozen('data', frozen);
-      namespace = key;
-      return processor
+      assertUnfrozen('data', this.frozen);
+      this.namespace = key;
+      return this
     }
-    return namespace
+    return this.namespace
   }
-  function freeze() {
-    if (frozen) {
-      return processor
+  freeze() {
+    if (this.frozen) {
+      return this
     }
-    while (++freezeIndex < attachers.length) {
-      const [attacher, ...options] = attachers[freezeIndex];
+    const self =  ( (this));
+    while (++this.freezeIndex < this.attachers.length) {
+      const [attacher, ...options] = this.attachers[this.freezeIndex];
       if (options[0] === false) {
         continue
       }
       if (options[0] === true) {
         options[0] = undefined;
       }
-      const transformer = attacher.call(processor, ...options);
+      const transformer = attacher.call(self, ...options);
       if (typeof transformer === 'function') {
-        transformers.use(transformer);
+        this.transformers.use(transformer);
       }
     }
-    frozen = true;
-    freezeIndex = Number.POSITIVE_INFINITY;
-    return processor
+    this.frozen = true;
+    this.freezeIndex = Number.POSITIVE_INFINITY;
+    return this
   }
-  function use(value, ...options) {
-    let settings;
-    assertUnfrozen('use', frozen);
+  parse(file) {
+    this.freeze();
+    const realFile = vfile(file);
+    const parser = this.parser || this.Parser;
+    assertParser('parse', parser);
+    return parser(String(realFile), realFile)
+  }
+  process(file, done) {
+    const self = this;
+    this.freeze();
+    assertParser('process', this.parser || this.Parser);
+    assertCompiler('process', this.compiler || this.Compiler);
+    return done ? executor(undefined, done) : new Promise(executor)
+    function executor(resolve, reject) {
+      const realFile = vfile(file);
+      const parseTree =
+         (
+           (self.parse(realFile))
+        );
+      self.run(parseTree, realFile, function (error, tree, file) {
+        if (error || !tree || !file) {
+          return realDone(error)
+        }
+        const compileTree =
+           (
+             (tree)
+          );
+        const compileResult = self.stringify(compileTree, file);
+        if (looksLikeAValue(compileResult)) {
+          file.value = compileResult;
+        } else {
+          file.result = compileResult;
+        }
+        realDone(error,  (file));
+      });
+      function realDone(error, file) {
+        if (error || !file) {
+          reject(error);
+        } else if (resolve) {
+          resolve(file);
+        } else {
+          done(undefined, file);
+        }
+      }
+    }
+  }
+  processSync(file) {
+    let complete = false;
+    let result;
+    this.freeze();
+    assertParser('processSync', this.parser || this.Parser);
+    assertCompiler('processSync', this.compiler || this.Compiler);
+    this.process(file, realDone);
+    assertDone('processSync', 'process', complete);
+    return result
+    function realDone(error, file) {
+      complete = true;
+      bail(error);
+      result = file;
+    }
+  }
+  run(tree, file, done) {
+    assertNode(tree);
+    this.freeze();
+    const transformers = this.transformers;
+    if (!done && typeof file === 'function') {
+      done = file;
+      file = undefined;
+    }
+    return done ? executor(undefined, done) : new Promise(executor)
+    function executor(resolve, reject) {
+      const realFile = vfile(file);
+      transformers.run(tree, realFile, realDone);
+      function realDone(error, outputTree, file) {
+        const resultingTree =
+           (
+            outputTree || tree
+          );
+        if (error) {
+          reject(error);
+        } else if (resolve) {
+          resolve(resultingTree);
+        } else {
+          done(undefined, resultingTree, file);
+        }
+      }
+    }
+  }
+  runSync(tree, file) {
+    let complete = false;
+    let result;
+    this.run(tree, file, realDone);
+    assertDone('runSync', 'run', complete);
+    return result
+    function realDone(error, tree) {
+      bail(error);
+      result = tree;
+      complete = true;
+    }
+  }
+  stringify(tree, file) {
+    this.freeze();
+    const realFile = vfile(file);
+    const compiler = this.compiler || this.Compiler;
+    assertCompiler('stringify', compiler);
+    assertNode(tree);
+    return compiler(tree, realFile)
+  }
+  use(value, ...parameters) {
+    const attachers = this.attachers;
+    const namespace = this.namespace;
+    assertUnfrozen('use', this.frozen);
     if (value === null || value === undefined) ; else if (typeof value === 'function') {
-      addPlugin(value, ...options);
+      addPlugin(value, parameters);
     } else if (typeof value === 'object') {
       if (Array.isArray(value)) {
         addList(value);
@@ -521,17 +695,15 @@ function base() {
     } else {
       throw new TypeError('Expected usable value, not `' + value + '`')
     }
-    if (settings) {
-      namespace.settings = Object.assign(namespace.settings || {}, settings);
-    }
-    return processor
+    return this
     function add(value) {
       if (typeof value === 'function') {
-        addPlugin(value);
+        addPlugin(value, []);
       } else if (typeof value === 'object') {
         if (Array.isArray(value)) {
-          const [plugin, ...options] = value;
-          addPlugin(plugin, ...options);
+          const [plugin, ...parameters] =
+             (value);
+          addPlugin(plugin, parameters);
         } else {
           addPreset(value);
         }
@@ -540,9 +712,14 @@ function base() {
       }
     }
     function addPreset(result) {
+      if (!('plugins' in result) && !('settings' in result)) {
+        throw new Error(
+          'Expected usable value but received an empty preset, which is probably a mistake: presets typically come with `plugins` and sometimes with `settings`, but this has neither'
+        )
+      }
       addList(result.plugins);
       if (result.settings) {
-        settings = Object.assign(settings || {}, result.settings);
+        namespace.settings = extend$2(true, namespace.settings, result.settings);
       }
     }
     function addList(plugins) {
@@ -556,156 +733,38 @@ function base() {
         throw new TypeError('Expected a list of plugins, not `' + plugins + '`')
       }
     }
-    function addPlugin(plugin, value) {
+    function addPlugin(plugin, parameters) {
       let index = -1;
-      let entry;
+      let entryIndex = -1;
       while (++index < attachers.length) {
         if (attachers[index][0] === plugin) {
-          entry = attachers[index];
+          entryIndex = index;
           break
         }
       }
-      if (entry) {
-        if (isPlainObject(entry[1]) && isPlainObject(value)) {
-          value = extend$2(true, entry[1], value);
+      if (entryIndex === -1) {
+        attachers.push([plugin, ...parameters]);
+      }
+      else if (parameters.length > 0) {
+        let [primary, ...rest] = parameters;
+        const currentPrimary = attachers[entryIndex][1];
+        if (isPlainObject(currentPrimary) && isPlainObject(primary)) {
+          primary = extend$2(true, currentPrimary, primary);
         }
-        entry[1] = value;
-      } else {
-        attachers.push([...arguments]);
+        attachers[entryIndex] = [plugin, primary, ...rest];
       }
     }
   }
-  function parse(doc) {
-    processor.freeze();
-    const file = vfile(doc);
-    const Parser = processor.Parser;
-    assertParser('parse', Parser);
-    if (newable(Parser, 'parse')) {
-      return new Parser(String(file), file).parse()
-    }
-    return Parser(String(file), file)
-  }
-  function stringify(node, doc) {
-    processor.freeze();
-    const file = vfile(doc);
-    const Compiler = processor.Compiler;
-    assertCompiler('stringify', Compiler);
-    assertNode(node);
-    if (newable(Compiler, 'compile')) {
-      return new Compiler(node, file).compile()
-    }
-    return Compiler(node, file)
-  }
-  function run(node, doc, callback) {
-    assertNode(node);
-    processor.freeze();
-    if (!callback && typeof doc === 'function') {
-      callback = doc;
-      doc = undefined;
-    }
-    if (!callback) {
-      return new Promise(executor)
-    }
-    executor(null, callback);
-    function executor(resolve, reject) {
-      transformers.run(node, vfile(doc), done);
-      function done(error, tree, file) {
-        tree = tree || node;
-        if (error) {
-          reject(error);
-        } else if (resolve) {
-          resolve(tree);
-        } else {
-          callback(null, tree, file);
-        }
-      }
-    }
-  }
-  function runSync(node, file) {
-    let result;
-    let complete;
-    processor.run(node, file, done);
-    assertDone('runSync', 'run', complete);
-    return result
-    function done(error, tree) {
-      bail(error);
-      result = tree;
-      complete = true;
-    }
-  }
-  function process(doc, callback) {
-    processor.freeze();
-    assertParser('process', processor.Parser);
-    assertCompiler('process', processor.Compiler);
-    if (!callback) {
-      return new Promise(executor)
-    }
-    executor(null, callback);
-    function executor(resolve, reject) {
-      const file = vfile(doc);
-      processor.run(processor.parse(file), file, (error, tree, file) => {
-        if (error || !tree || !file) {
-          done(error);
-        } else {
-          const result = processor.stringify(tree, file);
-          if (result === undefined || result === null) ; else if (looksLikeAVFileValue(result)) {
-            file.value = result;
-          } else {
-            file.result = result;
-          }
-          done(error, file);
-        }
-      });
-      function done(error, file) {
-        if (error || !file) {
-          reject(error);
-        } else if (resolve) {
-          resolve(file);
-        } else {
-          callback(null, file);
-        }
-      }
-    }
-  }
-  function processSync(doc) {
-    let complete;
-    processor.freeze();
-    assertParser('processSync', processor.Parser);
-    assertCompiler('processSync', processor.Compiler);
-    const file = vfile(doc);
-    processor.process(file, done);
-    assertDone('processSync', 'process', complete);
-    return file
-    function done(error) {
-      complete = true;
-      bail(error);
-    }
-  }
 }
-function newable(value, name) {
-  return (
-    typeof value === 'function' &&
-    value.prototype &&
-    (keys(value.prototype) || name in value.prototype)
-  )
-}
-function keys(value) {
-  let key;
-  for (key in value) {
-    if (own$7.call(value, key)) {
-      return true
-    }
-  }
-  return false
-}
+const unified = new Processor().freeze();
 function assertParser(name, value) {
   if (typeof value !== 'function') {
-    throw new TypeError('Cannot `' + name + '` without `Parser`')
+    throw new TypeError('Cannot `' + name + '` without `parser`')
   }
 }
 function assertCompiler(name, value) {
   if (typeof value !== 'function') {
-    throw new TypeError('Cannot `' + name + '` without `Compiler`')
+    throw new TypeError('Cannot `' + name + '` without `compiler`')
   }
 }
 function assertUnfrozen(name, frozen) {
@@ -740,13 +799,21 @@ function looksLikeAVFile$1(value) {
       'messages' in value
   )
 }
-function looksLikeAVFileValue(value) {
-  return typeof value === 'string' || buffer$1(value)
+function looksLikeAValue(value) {
+  return typeof value === 'string' || isUint8Array$1(value)
+}
+function isUint8Array$1(value) {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      'byteLength' in value &&
+      'byteOffset' in value
+  )
 }
 
-const emptyOptions = {};
+const emptyOptions$2 = {};
 function toString(value, options) {
-  const settings = options || emptyOptions;
+  const settings = emptyOptions$2;
   const includeImageAlt =
     typeof settings.includeImageAlt === 'boolean'
       ? settings.includeImageAlt
@@ -782,782 +849,6 @@ function all(values, includeImageAlt, includeHtml) {
 }
 function node(value) {
   return Boolean(value && typeof value === 'object')
-}
-
-function splice(list, start, remove, items) {
-  const end = list.length;
-  let chunkStart = 0;
-  let parameters;
-  if (start < 0) {
-    start = -start > end ? 0 : end + start;
-  } else {
-    start = start > end ? end : start;
-  }
-  remove = remove > 0 ? remove : 0;
-  if (items.length < 10000) {
-    parameters = Array.from(items);
-    parameters.unshift(start, remove);
-    list.splice(...parameters);
-  } else {
-    if (remove) list.splice(start, remove);
-    while (chunkStart < items.length) {
-      parameters = items.slice(chunkStart, chunkStart + 10000);
-      parameters.unshift(start, 0);
-      list.splice(...parameters);
-      chunkStart += 10000;
-      start += 10000;
-    }
-  }
-}
-function push(list, items) {
-  if (list.length > 0) {
-    splice(list, list.length, 0, items);
-    return list
-  }
-  return items
-}
-
-const hasOwnProperty = {}.hasOwnProperty;
-function combineExtensions(extensions) {
-  const all = {};
-  let index = -1;
-  while (++index < extensions.length) {
-    syntaxExtension(all, extensions[index]);
-  }
-  return all
-}
-function syntaxExtension(all, extension) {
-  let hook;
-  for (hook in extension) {
-    const maybe = hasOwnProperty.call(all, hook) ? all[hook] : undefined;
-    const left = maybe || (all[hook] = {});
-    const right = extension[hook];
-    let code;
-    if (right) {
-      for (code in right) {
-        if (!hasOwnProperty.call(left, code)) left[code] = [];
-        const value = right[code];
-        constructs(
-          left[code],
-          Array.isArray(value) ? value : value ? [value] : []
-        );
-      }
-    }
-  }
-}
-function constructs(existing, list) {
-  let index = -1;
-  const before = [];
-  while (++index < list.length) {
-(list[index].add === 'after' ? existing : before).push(list[index]);
-  }
-  splice(existing, 0, 0, before);
-}
-
-const unicodePunctuationRegex =
-  /[!-\/:-@\[-`\{-~\xA1\xA7\xAB\xB6\xB7\xBB\xBF\u037E\u0387\u055A-\u055F\u0589\u058A\u05BE\u05C0\u05C3\u05C6\u05F3\u05F4\u0609\u060A\u060C\u060D\u061B\u061D-\u061F\u066A-\u066D\u06D4\u0700-\u070D\u07F7-\u07F9\u0830-\u083E\u085E\u0964\u0965\u0970\u09FD\u0A76\u0AF0\u0C77\u0C84\u0DF4\u0E4F\u0E5A\u0E5B\u0F04-\u0F12\u0F14\u0F3A-\u0F3D\u0F85\u0FD0-\u0FD4\u0FD9\u0FDA\u104A-\u104F\u10FB\u1360-\u1368\u1400\u166E\u169B\u169C\u16EB-\u16ED\u1735\u1736\u17D4-\u17D6\u17D8-\u17DA\u1800-\u180A\u1944\u1945\u1A1E\u1A1F\u1AA0-\u1AA6\u1AA8-\u1AAD\u1B5A-\u1B60\u1B7D\u1B7E\u1BFC-\u1BFF\u1C3B-\u1C3F\u1C7E\u1C7F\u1CC0-\u1CC7\u1CD3\u2010-\u2027\u2030-\u2043\u2045-\u2051\u2053-\u205E\u207D\u207E\u208D\u208E\u2308-\u230B\u2329\u232A\u2768-\u2775\u27C5\u27C6\u27E6-\u27EF\u2983-\u2998\u29D8-\u29DB\u29FC\u29FD\u2CF9-\u2CFC\u2CFE\u2CFF\u2D70\u2E00-\u2E2E\u2E30-\u2E4F\u2E52-\u2E5D\u3001-\u3003\u3008-\u3011\u3014-\u301F\u3030\u303D\u30A0\u30FB\uA4FE\uA4FF\uA60D-\uA60F\uA673\uA67E\uA6F2-\uA6F7\uA874-\uA877\uA8CE\uA8CF\uA8F8-\uA8FA\uA8FC\uA92E\uA92F\uA95F\uA9C1-\uA9CD\uA9DE\uA9DF\uAA5C-\uAA5F\uAADE\uAADF\uAAF0\uAAF1\uABEB\uFD3E\uFD3F\uFE10-\uFE19\uFE30-\uFE52\uFE54-\uFE61\uFE63\uFE68\uFE6A\uFE6B\uFF01-\uFF03\uFF05-\uFF0A\uFF0C-\uFF0F\uFF1A\uFF1B\uFF1F\uFF20\uFF3B-\uFF3D\uFF3F\uFF5B\uFF5D\uFF5F-\uFF65]/;
-
-const asciiAlpha = regexCheck(/[A-Za-z]/);
-const asciiAlphanumeric = regexCheck(/[\dA-Za-z]/);
-const asciiAtext = regexCheck(/[#-'*+\--9=?A-Z^-~]/);
-function asciiControl(code) {
-  return (
-    code !== null && (code < 32 || code === 127)
-  )
-}
-const asciiDigit = regexCheck(/\d/);
-const asciiHexDigit = regexCheck(/[\dA-Fa-f]/);
-const asciiPunctuation = regexCheck(/[!-/:-@[-`{-~]/);
-function markdownLineEnding(code) {
-  return code !== null && code < -2
-}
-function markdownLineEndingOrSpace(code) {
-  return code !== null && (code < 0 || code === 32)
-}
-function markdownSpace(code) {
-  return code === -2 || code === -1 || code === 32
-}
-const unicodePunctuation = regexCheck(unicodePunctuationRegex);
-const unicodeWhitespace = regexCheck(/\s/);
-function regexCheck(regex) {
-  return check
-  function check(code) {
-    return code !== null && regex.test(String.fromCharCode(code))
-  }
-}
-
-function factorySpace(effects, ok, type, max) {
-  const limit = max ? max - 1 : Number.POSITIVE_INFINITY;
-  let size = 0;
-  return start
-  function start(code) {
-    if (markdownSpace(code)) {
-      effects.enter(type);
-      return prefix(code)
-    }
-    return ok(code)
-  }
-  function prefix(code) {
-    if (markdownSpace(code) && size++ < limit) {
-      effects.consume(code);
-      return prefix
-    }
-    effects.exit(type);
-    return ok(code)
-  }
-}
-
-const content$1 = {
-  tokenize: initializeContent
-};
-function initializeContent(effects) {
-  const contentStart = effects.attempt(
-    this.parser.constructs.contentInitial,
-    afterContentStartConstruct,
-    paragraphInitial
-  );
-  let previous;
-  return contentStart
-  function afterContentStartConstruct(code) {
-    if (code === null) {
-      effects.consume(code);
-      return
-    }
-    effects.enter('lineEnding');
-    effects.consume(code);
-    effects.exit('lineEnding');
-    return factorySpace(effects, contentStart, 'linePrefix')
-  }
-  function paragraphInitial(code) {
-    effects.enter('paragraph');
-    return lineStart(code)
-  }
-  function lineStart(code) {
-    const token = effects.enter('chunkText', {
-      contentType: 'text',
-      previous
-    });
-    if (previous) {
-      previous.next = token;
-    }
-    previous = token;
-    return data(code)
-  }
-  function data(code) {
-    if (code === null) {
-      effects.exit('chunkText');
-      effects.exit('paragraph');
-      effects.consume(code);
-      return
-    }
-    if (markdownLineEnding(code)) {
-      effects.consume(code);
-      effects.exit('chunkText');
-      return lineStart
-    }
-    effects.consume(code);
-    return data
-  }
-}
-
-const document$1 = {
-  tokenize: initializeDocument
-};
-const containerConstruct = {
-  tokenize: tokenizeContainer
-};
-function initializeDocument(effects) {
-  const self = this;
-  const stack = [];
-  let continued = 0;
-  let childFlow;
-  let childToken;
-  let lineStartOffset;
-  return start
-  function start(code) {
-    if (continued < stack.length) {
-      const item = stack[continued];
-      self.containerState = item[1];
-      return effects.attempt(
-        item[0].continuation,
-        documentContinue,
-        checkNewContainers
-      )(code)
-    }
-    return checkNewContainers(code)
-  }
-  function documentContinue(code) {
-    continued++;
-    if (self.containerState._closeFlow) {
-      self.containerState._closeFlow = undefined;
-      if (childFlow) {
-        closeFlow();
-      }
-      const indexBeforeExits = self.events.length;
-      let indexBeforeFlow = indexBeforeExits;
-      let point;
-      while (indexBeforeFlow--) {
-        if (
-          self.events[indexBeforeFlow][0] === 'exit' &&
-          self.events[indexBeforeFlow][1].type === 'chunkFlow'
-        ) {
-          point = self.events[indexBeforeFlow][1].end;
-          break
-        }
-      }
-      exitContainers(continued);
-      let index = indexBeforeExits;
-      while (index < self.events.length) {
-        self.events[index][1].end = Object.assign({}, point);
-        index++;
-      }
-      splice(
-        self.events,
-        indexBeforeFlow + 1,
-        0,
-        self.events.slice(indexBeforeExits)
-      );
-      self.events.length = index;
-      return checkNewContainers(code)
-    }
-    return start(code)
-  }
-  function checkNewContainers(code) {
-    if (continued === stack.length) {
-      if (!childFlow) {
-        return documentContinued(code)
-      }
-      if (childFlow.currentConstruct && childFlow.currentConstruct.concrete) {
-        return flowStart(code)
-      }
-      self.interrupt = Boolean(
-        childFlow.currentConstruct && !childFlow._gfmTableDynamicInterruptHack
-      );
-    }
-    self.containerState = {};
-    return effects.check(
-      containerConstruct,
-      thereIsANewContainer,
-      thereIsNoNewContainer
-    )(code)
-  }
-  function thereIsANewContainer(code) {
-    if (childFlow) closeFlow();
-    exitContainers(continued);
-    return documentContinued(code)
-  }
-  function thereIsNoNewContainer(code) {
-    self.parser.lazy[self.now().line] = continued !== stack.length;
-    lineStartOffset = self.now().offset;
-    return flowStart(code)
-  }
-  function documentContinued(code) {
-    self.containerState = {};
-    return effects.attempt(
-      containerConstruct,
-      containerContinue,
-      flowStart
-    )(code)
-  }
-  function containerContinue(code) {
-    continued++;
-    stack.push([self.currentConstruct, self.containerState]);
-    return documentContinued(code)
-  }
-  function flowStart(code) {
-    if (code === null) {
-      if (childFlow) closeFlow();
-      exitContainers(0);
-      effects.consume(code);
-      return
-    }
-    childFlow = childFlow || self.parser.flow(self.now());
-    effects.enter('chunkFlow', {
-      contentType: 'flow',
-      previous: childToken,
-      _tokenizer: childFlow
-    });
-    return flowContinue(code)
-  }
-  function flowContinue(code) {
-    if (code === null) {
-      writeToChild(effects.exit('chunkFlow'), true);
-      exitContainers(0);
-      effects.consume(code);
-      return
-    }
-    if (markdownLineEnding(code)) {
-      effects.consume(code);
-      writeToChild(effects.exit('chunkFlow'));
-      continued = 0;
-      self.interrupt = undefined;
-      return start
-    }
-    effects.consume(code);
-    return flowContinue
-  }
-  function writeToChild(token, eof) {
-    const stream = self.sliceStream(token);
-    if (eof) stream.push(null);
-    token.previous = childToken;
-    if (childToken) childToken.next = token;
-    childToken = token;
-    childFlow.defineSkip(token.start);
-    childFlow.write(stream);
-    if (self.parser.lazy[token.start.line]) {
-      let index = childFlow.events.length;
-      while (index--) {
-        if (
-          childFlow.events[index][1].start.offset < lineStartOffset &&
-          (!childFlow.events[index][1].end ||
-            childFlow.events[index][1].end.offset > lineStartOffset)
-        ) {
-          return
-        }
-      }
-      const indexBeforeExits = self.events.length;
-      let indexBeforeFlow = indexBeforeExits;
-      let seen;
-      let point;
-      while (indexBeforeFlow--) {
-        if (
-          self.events[indexBeforeFlow][0] === 'exit' &&
-          self.events[indexBeforeFlow][1].type === 'chunkFlow'
-        ) {
-          if (seen) {
-            point = self.events[indexBeforeFlow][1].end;
-            break
-          }
-          seen = true;
-        }
-      }
-      exitContainers(continued);
-      index = indexBeforeExits;
-      while (index < self.events.length) {
-        self.events[index][1].end = Object.assign({}, point);
-        index++;
-      }
-      splice(
-        self.events,
-        indexBeforeFlow + 1,
-        0,
-        self.events.slice(indexBeforeExits)
-      );
-      self.events.length = index;
-    }
-  }
-  function exitContainers(size) {
-    let index = stack.length;
-    while (index-- > size) {
-      const entry = stack[index];
-      self.containerState = entry[1];
-      entry[0].exit.call(self, effects);
-    }
-    stack.length = size;
-  }
-  function closeFlow() {
-    childFlow.write([null]);
-    childToken = undefined;
-    childFlow = undefined;
-    self.containerState._closeFlow = undefined;
-  }
-}
-function tokenizeContainer(effects, ok, nok) {
-  return factorySpace(
-    effects,
-    effects.attempt(this.parser.constructs.document, ok, nok),
-    'linePrefix',
-    this.parser.constructs.disable.null.includes('codeIndented') ? undefined : 4
-  )
-}
-
-function classifyCharacter(code) {
-  if (
-    code === null ||
-    markdownLineEndingOrSpace(code) ||
-    unicodeWhitespace(code)
-  ) {
-    return 1
-  }
-  if (unicodePunctuation(code)) {
-    return 2
-  }
-}
-
-function resolveAll(constructs, events, context) {
-  const called = [];
-  let index = -1;
-  while (++index < constructs.length) {
-    const resolve = constructs[index].resolveAll;
-    if (resolve && !called.includes(resolve)) {
-      events = resolve(events, context);
-      called.push(resolve);
-    }
-  }
-  return events
-}
-
-const attention = {
-  name: 'attention',
-  tokenize: tokenizeAttention,
-  resolveAll: resolveAllAttention
-};
-function resolveAllAttention(events, context) {
-  let index = -1;
-  let open;
-  let group;
-  let text;
-  let openingSequence;
-  let closingSequence;
-  let use;
-  let nextEvents;
-  let offset;
-  while (++index < events.length) {
-    if (
-      events[index][0] === 'enter' &&
-      events[index][1].type === 'attentionSequence' &&
-      events[index][1]._close
-    ) {
-      open = index;
-      while (open--) {
-        if (
-          events[open][0] === 'exit' &&
-          events[open][1].type === 'attentionSequence' &&
-          events[open][1]._open &&
-          context.sliceSerialize(events[open][1]).charCodeAt(0) ===
-            context.sliceSerialize(events[index][1]).charCodeAt(0)
-        ) {
-          if (
-            (events[open][1]._close || events[index][1]._open) &&
-            (events[index][1].end.offset - events[index][1].start.offset) % 3 &&
-            !(
-              (events[open][1].end.offset -
-                events[open][1].start.offset +
-                events[index][1].end.offset -
-                events[index][1].start.offset) %
-              3
-            )
-          ) {
-            continue
-          }
-          use =
-            events[open][1].end.offset - events[open][1].start.offset > 1 &&
-            events[index][1].end.offset - events[index][1].start.offset > 1
-              ? 2
-              : 1;
-          const start = Object.assign({}, events[open][1].end);
-          const end = Object.assign({}, events[index][1].start);
-          movePoint(start, -use);
-          movePoint(end, use);
-          openingSequence = {
-            type: use > 1 ? 'strongSequence' : 'emphasisSequence',
-            start,
-            end: Object.assign({}, events[open][1].end)
-          };
-          closingSequence = {
-            type: use > 1 ? 'strongSequence' : 'emphasisSequence',
-            start: Object.assign({}, events[index][1].start),
-            end
-          };
-          text = {
-            type: use > 1 ? 'strongText' : 'emphasisText',
-            start: Object.assign({}, events[open][1].end),
-            end: Object.assign({}, events[index][1].start)
-          };
-          group = {
-            type: use > 1 ? 'strong' : 'emphasis',
-            start: Object.assign({}, openingSequence.start),
-            end: Object.assign({}, closingSequence.end)
-          };
-          events[open][1].end = Object.assign({}, openingSequence.start);
-          events[index][1].start = Object.assign({}, closingSequence.end);
-          nextEvents = [];
-          if (events[open][1].end.offset - events[open][1].start.offset) {
-            nextEvents = push(nextEvents, [
-              ['enter', events[open][1], context],
-              ['exit', events[open][1], context]
-            ]);
-          }
-          nextEvents = push(nextEvents, [
-            ['enter', group, context],
-            ['enter', openingSequence, context],
-            ['exit', openingSequence, context],
-            ['enter', text, context]
-          ]);
-          nextEvents = push(
-            nextEvents,
-            resolveAll(
-              context.parser.constructs.insideSpan.null,
-              events.slice(open + 1, index),
-              context
-            )
-          );
-          nextEvents = push(nextEvents, [
-            ['exit', text, context],
-            ['enter', closingSequence, context],
-            ['exit', closingSequence, context],
-            ['exit', group, context]
-          ]);
-          if (events[index][1].end.offset - events[index][1].start.offset) {
-            offset = 2;
-            nextEvents = push(nextEvents, [
-              ['enter', events[index][1], context],
-              ['exit', events[index][1], context]
-            ]);
-          } else {
-            offset = 0;
-          }
-          splice(events, open - 1, index - open + 3, nextEvents);
-          index = open + nextEvents.length - offset - 2;
-          break
-        }
-      }
-    }
-  }
-  index = -1;
-  while (++index < events.length) {
-    if (events[index][1].type === 'attentionSequence') {
-      events[index][1].type = 'data';
-    }
-  }
-  return events
-}
-function tokenizeAttention(effects, ok) {
-  const attentionMarkers = this.parser.constructs.attentionMarkers.null;
-  const previous = this.previous;
-  const before = classifyCharacter(previous);
-  let marker;
-  return start
-  function start(code) {
-    marker = code;
-    effects.enter('attentionSequence');
-    return inside(code)
-  }
-  function inside(code) {
-    if (code === marker) {
-      effects.consume(code);
-      return inside
-    }
-    const token = effects.exit('attentionSequence');
-    const after = classifyCharacter(code);
-    const open =
-      !after || (after === 2 && before) || attentionMarkers.includes(code);
-    const close =
-      !before || (before === 2 && after) || attentionMarkers.includes(previous);
-    token._open = Boolean(marker === 42 ? open : open && (before || !close));
-    token._close = Boolean(marker === 42 ? close : close && (after || !open));
-    return ok(code)
-  }
-}
-function movePoint(point, offset) {
-  point.column += offset;
-  point.offset += offset;
-  point._bufferIndex += offset;
-}
-
-const autolink = {
-  name: 'autolink',
-  tokenize: tokenizeAutolink
-};
-function tokenizeAutolink(effects, ok, nok) {
-  let size = 0;
-  return start
-  function start(code) {
-    effects.enter('autolink');
-    effects.enter('autolinkMarker');
-    effects.consume(code);
-    effects.exit('autolinkMarker');
-    effects.enter('autolinkProtocol');
-    return open
-  }
-  function open(code) {
-    if (asciiAlpha(code)) {
-      effects.consume(code);
-      return schemeOrEmailAtext
-    }
-    return emailAtext(code)
-  }
-  function schemeOrEmailAtext(code) {
-    if (code === 43 || code === 45 || code === 46 || asciiAlphanumeric(code)) {
-      size = 1;
-      return schemeInsideOrEmailAtext(code)
-    }
-    return emailAtext(code)
-  }
-  function schemeInsideOrEmailAtext(code) {
-    if (code === 58) {
-      effects.consume(code);
-      size = 0;
-      return urlInside
-    }
-    if (
-      (code === 43 || code === 45 || code === 46 || asciiAlphanumeric(code)) &&
-      size++ < 32
-    ) {
-      effects.consume(code);
-      return schemeInsideOrEmailAtext
-    }
-    size = 0;
-    return emailAtext(code)
-  }
-  function urlInside(code) {
-    if (code === 62) {
-      effects.exit('autolinkProtocol');
-      effects.enter('autolinkMarker');
-      effects.consume(code);
-      effects.exit('autolinkMarker');
-      effects.exit('autolink');
-      return ok
-    }
-    if (code === null || code === 32 || code === 60 || asciiControl(code)) {
-      return nok(code)
-    }
-    effects.consume(code);
-    return urlInside
-  }
-  function emailAtext(code) {
-    if (code === 64) {
-      effects.consume(code);
-      return emailAtSignOrDot
-    }
-    if (asciiAtext(code)) {
-      effects.consume(code);
-      return emailAtext
-    }
-    return nok(code)
-  }
-  function emailAtSignOrDot(code) {
-    return asciiAlphanumeric(code) ? emailLabel(code) : nok(code)
-  }
-  function emailLabel(code) {
-    if (code === 46) {
-      effects.consume(code);
-      size = 0;
-      return emailAtSignOrDot
-    }
-    if (code === 62) {
-      effects.exit('autolinkProtocol').type = 'autolinkEmail';
-      effects.enter('autolinkMarker');
-      effects.consume(code);
-      effects.exit('autolinkMarker');
-      effects.exit('autolink');
-      return ok
-    }
-    return emailValue(code)
-  }
-  function emailValue(code) {
-    if ((code === 45 || asciiAlphanumeric(code)) && size++ < 63) {
-      const next = code === 45 ? emailValue : emailLabel;
-      effects.consume(code);
-      return next
-    }
-    return nok(code)
-  }
-}
-
-const blankLine = {
-  tokenize: tokenizeBlankLine,
-  partial: true
-};
-function tokenizeBlankLine(effects, ok, nok) {
-  return start
-  function start(code) {
-    return markdownSpace(code)
-      ? factorySpace(effects, after, 'linePrefix')(code)
-      : after(code)
-  }
-  function after(code) {
-    return code === null || markdownLineEnding(code) ? ok(code) : nok(code)
-  }
-}
-
-const blockQuote = {
-  name: 'blockQuote',
-  tokenize: tokenizeBlockQuoteStart,
-  continuation: {
-    tokenize: tokenizeBlockQuoteContinuation
-  },
-  exit: exit$1
-};
-function tokenizeBlockQuoteStart(effects, ok, nok) {
-  const self = this;
-  return start
-  function start(code) {
-    if (code === 62) {
-      const state = self.containerState;
-      if (!state.open) {
-        effects.enter('blockQuote', {
-          _container: true
-        });
-        state.open = true;
-      }
-      effects.enter('blockQuotePrefix');
-      effects.enter('blockQuoteMarker');
-      effects.consume(code);
-      effects.exit('blockQuoteMarker');
-      return after
-    }
-    return nok(code)
-  }
-  function after(code) {
-    if (markdownSpace(code)) {
-      effects.enter('blockQuotePrefixWhitespace');
-      effects.consume(code);
-      effects.exit('blockQuotePrefixWhitespace');
-      effects.exit('blockQuotePrefix');
-      return ok
-    }
-    effects.exit('blockQuotePrefix');
-    return ok(code)
-  }
-}
-function tokenizeBlockQuoteContinuation(effects, ok, nok) {
-  const self = this;
-  return contStart
-  function contStart(code) {
-    if (markdownSpace(code)) {
-      return factorySpace(
-        effects,
-        contBefore,
-        'linePrefix',
-        self.parser.constructs.disable.null.includes('codeIndented')
-          ? undefined
-          : 4
-      )(code)
-    }
-    return contBefore(code)
-  }
-  function contBefore(code) {
-    return effects.attempt(blockQuote, ok, nok)(code)
-  }
-}
-function exit$1(effects) {
-  effects.exit('blockQuote');
-}
-
-const characterEscape = {
-  name: 'characterEscape',
-  tokenize: tokenizeCharacterEscape
-};
-function tokenizeCharacterEscape(effects, ok, nok) {
-  return start
-  function start(code) {
-    effects.enter('characterEscape');
-    effects.enter('escapeMarker');
-    effects.consume(code);
-    effects.exit('escapeMarker');
-    return inside
-  }
-  function inside(code) {
-    if (asciiPunctuation(code)) {
-      effects.enter('characterEscapeValue');
-      effects.consume(code);
-      effects.exit('characterEscapeValue');
-      effects.exit('characterEscape');
-      return ok
-    }
-    return nok(code)
-  }
 }
 
 const characterEntities = {
@@ -3688,9 +2979,749 @@ const characterEntities = {
   zwnj: '‌'
 };
 
-const own$6 = {}.hasOwnProperty;
+const own$4 = {}.hasOwnProperty;
 function decodeNamedCharacterReference(value) {
-  return own$6.call(characterEntities, value) ? characterEntities[value] : false
+  return own$4.call(characterEntities, value) ? characterEntities[value] : false
+}
+
+function splice(list, start, remove, items) {
+  const end = list.length;
+  let chunkStart = 0;
+  let parameters;
+  if (start < 0) {
+    start = -start > end ? 0 : end + start;
+  } else {
+    start = start > end ? end : start;
+  }
+  remove = remove > 0 ? remove : 0;
+  if (items.length < 10000) {
+    parameters = Array.from(items);
+    parameters.unshift(start, remove);
+    list.splice(...parameters);
+  } else {
+    if (remove) list.splice(start, remove);
+    while (chunkStart < items.length) {
+      parameters = items.slice(chunkStart, chunkStart + 10000);
+      parameters.unshift(start, 0);
+      list.splice(...parameters);
+      chunkStart += 10000;
+      start += 10000;
+    }
+  }
+}
+function push(list, items) {
+  if (list.length > 0) {
+    splice(list, list.length, 0, items);
+    return list
+  }
+  return items
+}
+
+const hasOwnProperty = {}.hasOwnProperty;
+function combineExtensions(extensions) {
+  const all = {};
+  let index = -1;
+  while (++index < extensions.length) {
+    syntaxExtension(all, extensions[index]);
+  }
+  return all
+}
+function syntaxExtension(all, extension) {
+  let hook;
+  for (hook in extension) {
+    const maybe = hasOwnProperty.call(all, hook) ? all[hook] : undefined;
+    const left = maybe || (all[hook] = {});
+    const right = extension[hook];
+    let code;
+    if (right) {
+      for (code in right) {
+        if (!hasOwnProperty.call(left, code)) left[code] = [];
+        const value = right[code];
+        constructs(
+          left[code],
+          Array.isArray(value) ? value : value ? [value] : []
+        );
+      }
+    }
+  }
+}
+function constructs(existing, list) {
+  let index = -1;
+  const before = [];
+  while (++index < list.length) {
+(list[index].add === 'after' ? existing : before).push(list[index]);
+  }
+  splice(existing, 0, 0, before);
+}
+
+function decodeNumericCharacterReference(value, base) {
+  const code = Number.parseInt(value, base);
+  if (
+  code < 9 || code === 11 || code > 13 && code < 32 ||
+  code > 126 && code < 160 ||
+  code > 55_295 && code < 57_344 ||
+  code > 64_975 && code < 65_008 ||
+  (code & 65_535) === 65_535 || (code & 65_535) === 65_534 ||
+  code > 1_114_111) {
+    return "\uFFFD";
+  }
+  return String.fromCodePoint(code);
+}
+
+function normalizeIdentifier(value) {
+  return (
+    value
+      .replace(/[\t\n\r ]+/g, ' ')
+      .replace(/^ | $/g, '')
+      .toLowerCase()
+      .toUpperCase()
+  )
+}
+
+const asciiAlpha = regexCheck(/[A-Za-z]/);
+const asciiAlphanumeric = regexCheck(/[\dA-Za-z]/);
+const asciiAtext = regexCheck(/[#-'*+\--9=?A-Z^-~]/);
+function asciiControl(code) {
+  return (
+    code !== null && (code < 32 || code === 127)
+  );
+}
+const asciiDigit = regexCheck(/\d/);
+const asciiHexDigit = regexCheck(/[\dA-Fa-f]/);
+const asciiPunctuation = regexCheck(/[!-/:-@[-`{-~]/);
+function markdownLineEnding(code) {
+  return code !== null && code < -2;
+}
+function markdownLineEndingOrSpace(code) {
+  return code !== null && (code < 0 || code === 32);
+}
+function markdownSpace(code) {
+  return code === -2 || code === -1 || code === 32;
+}
+const unicodePunctuation = regexCheck(/\p{P}|\p{S}/u);
+const unicodeWhitespace = regexCheck(/\s/);
+function regexCheck(regex) {
+  return check;
+  function check(code) {
+    return code !== null && code > -1 && regex.test(String.fromCharCode(code));
+  }
+}
+
+function factorySpace(effects, ok, type, max) {
+  const limit = max ? max - 1 : Number.POSITIVE_INFINITY;
+  let size = 0;
+  return start
+  function start(code) {
+    if (markdownSpace(code)) {
+      effects.enter(type);
+      return prefix(code)
+    }
+    return ok(code)
+  }
+  function prefix(code) {
+    if (markdownSpace(code) && size++ < limit) {
+      effects.consume(code);
+      return prefix
+    }
+    effects.exit(type);
+    return ok(code)
+  }
+}
+
+const content$1 = {
+  tokenize: initializeContent
+};
+function initializeContent(effects) {
+  const contentStart = effects.attempt(
+    this.parser.constructs.contentInitial,
+    afterContentStartConstruct,
+    paragraphInitial
+  );
+  let previous;
+  return contentStart
+  function afterContentStartConstruct(code) {
+    if (code === null) {
+      effects.consume(code);
+      return
+    }
+    effects.enter('lineEnding');
+    effects.consume(code);
+    effects.exit('lineEnding');
+    return factorySpace(effects, contentStart, 'linePrefix')
+  }
+  function paragraphInitial(code) {
+    effects.enter('paragraph');
+    return lineStart(code)
+  }
+  function lineStart(code) {
+    const token = effects.enter('chunkText', {
+      contentType: 'text',
+      previous
+    });
+    if (previous) {
+      previous.next = token;
+    }
+    previous = token;
+    return data(code)
+  }
+  function data(code) {
+    if (code === null) {
+      effects.exit('chunkText');
+      effects.exit('paragraph');
+      effects.consume(code);
+      return
+    }
+    if (markdownLineEnding(code)) {
+      effects.consume(code);
+      effects.exit('chunkText');
+      return lineStart
+    }
+    effects.consume(code);
+    return data
+  }
+}
+
+const document$1 = {
+  tokenize: initializeDocument
+};
+const containerConstruct = {
+  tokenize: tokenizeContainer
+};
+function initializeDocument(effects) {
+  const self = this;
+  const stack = [];
+  let continued = 0;
+  let childFlow;
+  let childToken;
+  let lineStartOffset;
+  return start
+  function start(code) {
+    if (continued < stack.length) {
+      const item = stack[continued];
+      self.containerState = item[1];
+      return effects.attempt(
+        item[0].continuation,
+        documentContinue,
+        checkNewContainers
+      )(code)
+    }
+    return checkNewContainers(code)
+  }
+  function documentContinue(code) {
+    continued++;
+    if (self.containerState._closeFlow) {
+      self.containerState._closeFlow = undefined;
+      if (childFlow) {
+        closeFlow();
+      }
+      const indexBeforeExits = self.events.length;
+      let indexBeforeFlow = indexBeforeExits;
+      let point;
+      while (indexBeforeFlow--) {
+        if (
+          self.events[indexBeforeFlow][0] === 'exit' &&
+          self.events[indexBeforeFlow][1].type === 'chunkFlow'
+        ) {
+          point = self.events[indexBeforeFlow][1].end;
+          break
+        }
+      }
+      exitContainers(continued);
+      let index = indexBeforeExits;
+      while (index < self.events.length) {
+        self.events[index][1].end = Object.assign({}, point);
+        index++;
+      }
+      splice(
+        self.events,
+        indexBeforeFlow + 1,
+        0,
+        self.events.slice(indexBeforeExits)
+      );
+      self.events.length = index;
+      return checkNewContainers(code)
+    }
+    return start(code)
+  }
+  function checkNewContainers(code) {
+    if (continued === stack.length) {
+      if (!childFlow) {
+        return documentContinued(code)
+      }
+      if (childFlow.currentConstruct && childFlow.currentConstruct.concrete) {
+        return flowStart(code)
+      }
+      self.interrupt = Boolean(
+        childFlow.currentConstruct && !childFlow._gfmTableDynamicInterruptHack
+      );
+    }
+    self.containerState = {};
+    return effects.check(
+      containerConstruct,
+      thereIsANewContainer,
+      thereIsNoNewContainer
+    )(code)
+  }
+  function thereIsANewContainer(code) {
+    if (childFlow) closeFlow();
+    exitContainers(continued);
+    return documentContinued(code)
+  }
+  function thereIsNoNewContainer(code) {
+    self.parser.lazy[self.now().line] = continued !== stack.length;
+    lineStartOffset = self.now().offset;
+    return flowStart(code)
+  }
+  function documentContinued(code) {
+    self.containerState = {};
+    return effects.attempt(
+      containerConstruct,
+      containerContinue,
+      flowStart
+    )(code)
+  }
+  function containerContinue(code) {
+    continued++;
+    stack.push([self.currentConstruct, self.containerState]);
+    return documentContinued(code)
+  }
+  function flowStart(code) {
+    if (code === null) {
+      if (childFlow) closeFlow();
+      exitContainers(0);
+      effects.consume(code);
+      return
+    }
+    childFlow = childFlow || self.parser.flow(self.now());
+    effects.enter('chunkFlow', {
+      contentType: 'flow',
+      previous: childToken,
+      _tokenizer: childFlow
+    });
+    return flowContinue(code)
+  }
+  function flowContinue(code) {
+    if (code === null) {
+      writeToChild(effects.exit('chunkFlow'), true);
+      exitContainers(0);
+      effects.consume(code);
+      return
+    }
+    if (markdownLineEnding(code)) {
+      effects.consume(code);
+      writeToChild(effects.exit('chunkFlow'));
+      continued = 0;
+      self.interrupt = undefined;
+      return start
+    }
+    effects.consume(code);
+    return flowContinue
+  }
+  function writeToChild(token, eof) {
+    const stream = self.sliceStream(token);
+    if (eof) stream.push(null);
+    token.previous = childToken;
+    if (childToken) childToken.next = token;
+    childToken = token;
+    childFlow.defineSkip(token.start);
+    childFlow.write(stream);
+    if (self.parser.lazy[token.start.line]) {
+      let index = childFlow.events.length;
+      while (index--) {
+        if (
+          childFlow.events[index][1].start.offset < lineStartOffset &&
+          (!childFlow.events[index][1].end ||
+            childFlow.events[index][1].end.offset > lineStartOffset)
+        ) {
+          return
+        }
+      }
+      const indexBeforeExits = self.events.length;
+      let indexBeforeFlow = indexBeforeExits;
+      let seen;
+      let point;
+      while (indexBeforeFlow--) {
+        if (
+          self.events[indexBeforeFlow][0] === 'exit' &&
+          self.events[indexBeforeFlow][1].type === 'chunkFlow'
+        ) {
+          if (seen) {
+            point = self.events[indexBeforeFlow][1].end;
+            break
+          }
+          seen = true;
+        }
+      }
+      exitContainers(continued);
+      index = indexBeforeExits;
+      while (index < self.events.length) {
+        self.events[index][1].end = Object.assign({}, point);
+        index++;
+      }
+      splice(
+        self.events,
+        indexBeforeFlow + 1,
+        0,
+        self.events.slice(indexBeforeExits)
+      );
+      self.events.length = index;
+    }
+  }
+  function exitContainers(size) {
+    let index = stack.length;
+    while (index-- > size) {
+      const entry = stack[index];
+      self.containerState = entry[1];
+      entry[0].exit.call(self, effects);
+    }
+    stack.length = size;
+  }
+  function closeFlow() {
+    childFlow.write([null]);
+    childToken = undefined;
+    childFlow = undefined;
+    self.containerState._closeFlow = undefined;
+  }
+}
+function tokenizeContainer(effects, ok, nok) {
+  return factorySpace(
+    effects,
+    effects.attempt(this.parser.constructs.document, ok, nok),
+    'linePrefix',
+    this.parser.constructs.disable.null.includes('codeIndented') ? undefined : 4
+  )
+}
+
+function classifyCharacter(code) {
+  if (
+    code === null ||
+    markdownLineEndingOrSpace(code) ||
+    unicodeWhitespace(code)
+  ) {
+    return 1
+  }
+  if (unicodePunctuation(code)) {
+    return 2
+  }
+}
+
+function resolveAll(constructs, events, context) {
+  const called = [];
+  let index = -1;
+  while (++index < constructs.length) {
+    const resolve = constructs[index].resolveAll;
+    if (resolve && !called.includes(resolve)) {
+      events = resolve(events, context);
+      called.push(resolve);
+    }
+  }
+  return events
+}
+
+const attention = {
+  name: 'attention',
+  tokenize: tokenizeAttention,
+  resolveAll: resolveAllAttention
+};
+function resolveAllAttention(events, context) {
+  let index = -1;
+  let open;
+  let group;
+  let text;
+  let openingSequence;
+  let closingSequence;
+  let use;
+  let nextEvents;
+  let offset;
+  while (++index < events.length) {
+    if (events[index][0] === 'enter' && events[index][1].type === 'attentionSequence' && events[index][1]._close) {
+      open = index;
+      while (open--) {
+        if (events[open][0] === 'exit' && events[open][1].type === 'attentionSequence' && events[open][1]._open &&
+        context.sliceSerialize(events[open][1]).charCodeAt(0) === context.sliceSerialize(events[index][1]).charCodeAt(0)) {
+          if ((events[open][1]._close || events[index][1]._open) && (events[index][1].end.offset - events[index][1].start.offset) % 3 && !((events[open][1].end.offset - events[open][1].start.offset + events[index][1].end.offset - events[index][1].start.offset) % 3)) {
+            continue;
+          }
+          use = events[open][1].end.offset - events[open][1].start.offset > 1 && events[index][1].end.offset - events[index][1].start.offset > 1 ? 2 : 1;
+          const start = Object.assign({}, events[open][1].end);
+          const end = Object.assign({}, events[index][1].start);
+          movePoint(start, -use);
+          movePoint(end, use);
+          openingSequence = {
+            type: use > 1 ? "strongSequence" : "emphasisSequence",
+            start,
+            end: Object.assign({}, events[open][1].end)
+          };
+          closingSequence = {
+            type: use > 1 ? "strongSequence" : "emphasisSequence",
+            start: Object.assign({}, events[index][1].start),
+            end
+          };
+          text = {
+            type: use > 1 ? "strongText" : "emphasisText",
+            start: Object.assign({}, events[open][1].end),
+            end: Object.assign({}, events[index][1].start)
+          };
+          group = {
+            type: use > 1 ? "strong" : "emphasis",
+            start: Object.assign({}, openingSequence.start),
+            end: Object.assign({}, closingSequence.end)
+          };
+          events[open][1].end = Object.assign({}, openingSequence.start);
+          events[index][1].start = Object.assign({}, closingSequence.end);
+          nextEvents = [];
+          if (events[open][1].end.offset - events[open][1].start.offset) {
+            nextEvents = push(nextEvents, [['enter', events[open][1], context], ['exit', events[open][1], context]]);
+          }
+          nextEvents = push(nextEvents, [['enter', group, context], ['enter', openingSequence, context], ['exit', openingSequence, context], ['enter', text, context]]);
+          nextEvents = push(nextEvents, resolveAll(context.parser.constructs.insideSpan.null, events.slice(open + 1, index), context));
+          nextEvents = push(nextEvents, [['exit', text, context], ['enter', closingSequence, context], ['exit', closingSequence, context], ['exit', group, context]]);
+          if (events[index][1].end.offset - events[index][1].start.offset) {
+            offset = 2;
+            nextEvents = push(nextEvents, [['enter', events[index][1], context], ['exit', events[index][1], context]]);
+          } else {
+            offset = 0;
+          }
+          splice(events, open - 1, index - open + 3, nextEvents);
+          index = open + nextEvents.length - offset - 2;
+          break;
+        }
+      }
+    }
+  }
+  index = -1;
+  while (++index < events.length) {
+    if (events[index][1].type === 'attentionSequence') {
+      events[index][1].type = 'data';
+    }
+  }
+  return events;
+}
+function tokenizeAttention(effects, ok) {
+  const attentionMarkers = this.parser.constructs.attentionMarkers.null;
+  const previous = this.previous;
+  const before = classifyCharacter(previous);
+  let marker;
+  return start;
+  function start(code) {
+    marker = code;
+    effects.enter('attentionSequence');
+    return inside(code);
+  }
+  function inside(code) {
+    if (code === marker) {
+      effects.consume(code);
+      return inside;
+    }
+    const token = effects.exit('attentionSequence');
+    const after = classifyCharacter(code);
+    const open = !after || after === 2 && before || attentionMarkers.includes(code);
+    const close = !before || before === 2 && after || attentionMarkers.includes(previous);
+    token._open = Boolean(marker === 42 ? open : open && (before || !close));
+    token._close = Boolean(marker === 42 ? close : close && (after || !open));
+    return ok(code);
+  }
+}
+function movePoint(point, offset) {
+  point.column += offset;
+  point.offset += offset;
+  point._bufferIndex += offset;
+}
+
+const autolink = {
+  name: 'autolink',
+  tokenize: tokenizeAutolink
+};
+function tokenizeAutolink(effects, ok, nok) {
+  let size = 0;
+  return start;
+  function start(code) {
+    effects.enter("autolink");
+    effects.enter("autolinkMarker");
+    effects.consume(code);
+    effects.exit("autolinkMarker");
+    effects.enter("autolinkProtocol");
+    return open;
+  }
+  function open(code) {
+    if (asciiAlpha(code)) {
+      effects.consume(code);
+      return schemeOrEmailAtext;
+    }
+    if (code === 64) {
+      return nok(code);
+    }
+    return emailAtext(code);
+  }
+  function schemeOrEmailAtext(code) {
+    if (code === 43 || code === 45 || code === 46 || asciiAlphanumeric(code)) {
+      size = 1;
+      return schemeInsideOrEmailAtext(code);
+    }
+    return emailAtext(code);
+  }
+  function schemeInsideOrEmailAtext(code) {
+    if (code === 58) {
+      effects.consume(code);
+      size = 0;
+      return urlInside;
+    }
+    if ((code === 43 || code === 45 || code === 46 || asciiAlphanumeric(code)) && size++ < 32) {
+      effects.consume(code);
+      return schemeInsideOrEmailAtext;
+    }
+    size = 0;
+    return emailAtext(code);
+  }
+  function urlInside(code) {
+    if (code === 62) {
+      effects.exit("autolinkProtocol");
+      effects.enter("autolinkMarker");
+      effects.consume(code);
+      effects.exit("autolinkMarker");
+      effects.exit("autolink");
+      return ok;
+    }
+    if (code === null || code === 32 || code === 60 || asciiControl(code)) {
+      return nok(code);
+    }
+    effects.consume(code);
+    return urlInside;
+  }
+  function emailAtext(code) {
+    if (code === 64) {
+      effects.consume(code);
+      return emailAtSignOrDot;
+    }
+    if (asciiAtext(code)) {
+      effects.consume(code);
+      return emailAtext;
+    }
+    return nok(code);
+  }
+  function emailAtSignOrDot(code) {
+    return asciiAlphanumeric(code) ? emailLabel(code) : nok(code);
+  }
+  function emailLabel(code) {
+    if (code === 46) {
+      effects.consume(code);
+      size = 0;
+      return emailAtSignOrDot;
+    }
+    if (code === 62) {
+      effects.exit("autolinkProtocol").type = "autolinkEmail";
+      effects.enter("autolinkMarker");
+      effects.consume(code);
+      effects.exit("autolinkMarker");
+      effects.exit("autolink");
+      return ok;
+    }
+    return emailValue(code);
+  }
+  function emailValue(code) {
+    if ((code === 45 || asciiAlphanumeric(code)) && size++ < 63) {
+      const next = code === 45 ? emailValue : emailLabel;
+      effects.consume(code);
+      return next;
+    }
+    return nok(code);
+  }
+}
+
+const blankLine = {
+  tokenize: tokenizeBlankLine,
+  partial: true
+};
+function tokenizeBlankLine(effects, ok, nok) {
+  return start;
+  function start(code) {
+    return markdownSpace(code) ? factorySpace(effects, after, "linePrefix")(code) : after(code);
+  }
+  function after(code) {
+    return code === null || markdownLineEnding(code) ? ok(code) : nok(code);
+  }
+}
+
+const blockQuote = {
+  name: 'blockQuote',
+  tokenize: tokenizeBlockQuoteStart,
+  continuation: {
+    tokenize: tokenizeBlockQuoteContinuation
+  },
+  exit: exit$1
+};
+function tokenizeBlockQuoteStart(effects, ok, nok) {
+  const self = this;
+  return start;
+  function start(code) {
+    if (code === 62) {
+      const state = self.containerState;
+      if (!state.open) {
+        effects.enter("blockQuote", {
+          _container: true
+        });
+        state.open = true;
+      }
+      effects.enter("blockQuotePrefix");
+      effects.enter("blockQuoteMarker");
+      effects.consume(code);
+      effects.exit("blockQuoteMarker");
+      return after;
+    }
+    return nok(code);
+  }
+  function after(code) {
+    if (markdownSpace(code)) {
+      effects.enter("blockQuotePrefixWhitespace");
+      effects.consume(code);
+      effects.exit("blockQuotePrefixWhitespace");
+      effects.exit("blockQuotePrefix");
+      return ok;
+    }
+    effects.exit("blockQuotePrefix");
+    return ok(code);
+  }
+}
+function tokenizeBlockQuoteContinuation(effects, ok, nok) {
+  const self = this;
+  return contStart;
+  function contStart(code) {
+    if (markdownSpace(code)) {
+      return factorySpace(effects, contBefore, "linePrefix", self.parser.constructs.disable.null.includes('codeIndented') ? undefined : 4)(code);
+    }
+    return contBefore(code);
+  }
+  function contBefore(code) {
+    return effects.attempt(blockQuote, ok, nok)(code);
+  }
+}
+function exit$1(effects) {
+  effects.exit("blockQuote");
+}
+
+const characterEscape = {
+  name: 'characterEscape',
+  tokenize: tokenizeCharacterEscape
+};
+function tokenizeCharacterEscape(effects, ok, nok) {
+  return start;
+  function start(code) {
+    effects.enter("characterEscape");
+    effects.enter("escapeMarker");
+    effects.consume(code);
+    effects.exit("escapeMarker");
+    return inside;
+  }
+  function inside(code) {
+    if (asciiPunctuation(code)) {
+      effects.enter("characterEscapeValue");
+      effects.consume(code);
+      effects.exit("characterEscapeValue");
+      effects.exit("characterEscape");
+      return ok;
+    }
+    return nok(code);
+  }
 }
 
 const characterReference = {
@@ -3702,61 +3733,58 @@ function tokenizeCharacterReference(effects, ok, nok) {
   let size = 0;
   let max;
   let test;
-  return start
+  return start;
   function start(code) {
-    effects.enter('characterReference');
-    effects.enter('characterReferenceMarker');
+    effects.enter("characterReference");
+    effects.enter("characterReferenceMarker");
     effects.consume(code);
-    effects.exit('characterReferenceMarker');
-    return open
+    effects.exit("characterReferenceMarker");
+    return open;
   }
   function open(code) {
     if (code === 35) {
-      effects.enter('characterReferenceMarkerNumeric');
+      effects.enter("characterReferenceMarkerNumeric");
       effects.consume(code);
-      effects.exit('characterReferenceMarkerNumeric');
-      return numeric
+      effects.exit("characterReferenceMarkerNumeric");
+      return numeric;
     }
-    effects.enter('characterReferenceValue');
+    effects.enter("characterReferenceValue");
     max = 31;
     test = asciiAlphanumeric;
-    return value(code)
+    return value(code);
   }
   function numeric(code) {
     if (code === 88 || code === 120) {
-      effects.enter('characterReferenceMarkerHexadecimal');
+      effects.enter("characterReferenceMarkerHexadecimal");
       effects.consume(code);
-      effects.exit('characterReferenceMarkerHexadecimal');
-      effects.enter('characterReferenceValue');
+      effects.exit("characterReferenceMarkerHexadecimal");
+      effects.enter("characterReferenceValue");
       max = 6;
       test = asciiHexDigit;
-      return value
+      return value;
     }
-    effects.enter('characterReferenceValue');
+    effects.enter("characterReferenceValue");
     max = 7;
     test = asciiDigit;
-    return value(code)
+    return value(code);
   }
   function value(code) {
     if (code === 59 && size) {
-      const token = effects.exit('characterReferenceValue');
-      if (
-        test === asciiAlphanumeric &&
-        !decodeNamedCharacterReference(self.sliceSerialize(token))
-      ) {
-        return nok(code)
+      const token = effects.exit("characterReferenceValue");
+      if (test === asciiAlphanumeric && !decodeNamedCharacterReference(self.sliceSerialize(token))) {
+        return nok(code);
       }
-      effects.enter('characterReferenceMarker');
+      effects.enter("characterReferenceMarker");
       effects.consume(code);
-      effects.exit('characterReferenceMarker');
-      effects.exit('characterReference');
-      return ok
+      effects.exit("characterReferenceMarker");
+      effects.exit("characterReference");
+      return ok;
     }
     if (test(code) && size++ < max) {
       effects.consume(code);
-      return value
+      return value;
     }
-    return nok(code)
+    return nok(code);
   }
 }
 
@@ -3778,192 +3806,167 @@ function tokenizeCodeFenced(effects, ok, nok) {
   let initialPrefix = 0;
   let sizeOpen = 0;
   let marker;
-  return start
+  return start;
   function start(code) {
-    return beforeSequenceOpen(code)
+    return beforeSequenceOpen(code);
   }
   function beforeSequenceOpen(code) {
     const tail = self.events[self.events.length - 1];
-    initialPrefix =
-      tail && tail[1].type === 'linePrefix'
-        ? tail[2].sliceSerialize(tail[1], true).length
-        : 0;
+    initialPrefix = tail && tail[1].type === "linePrefix" ? tail[2].sliceSerialize(tail[1], true).length : 0;
     marker = code;
-    effects.enter('codeFenced');
-    effects.enter('codeFencedFence');
-    effects.enter('codeFencedFenceSequence');
-    return sequenceOpen(code)
+    effects.enter("codeFenced");
+    effects.enter("codeFencedFence");
+    effects.enter("codeFencedFenceSequence");
+    return sequenceOpen(code);
   }
   function sequenceOpen(code) {
     if (code === marker) {
       sizeOpen++;
       effects.consume(code);
-      return sequenceOpen
+      return sequenceOpen;
     }
     if (sizeOpen < 3) {
-      return nok(code)
+      return nok(code);
     }
-    effects.exit('codeFencedFenceSequence');
-    return markdownSpace(code)
-      ? factorySpace(effects, infoBefore, 'whitespace')(code)
-      : infoBefore(code)
+    effects.exit("codeFencedFenceSequence");
+    return markdownSpace(code) ? factorySpace(effects, infoBefore, "whitespace")(code) : infoBefore(code);
   }
   function infoBefore(code) {
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('codeFencedFence');
-      return self.interrupt
-        ? ok(code)
-        : effects.check(nonLazyContinuation, atNonLazyBreak, after)(code)
+      effects.exit("codeFencedFence");
+      return self.interrupt ? ok(code) : effects.check(nonLazyContinuation, atNonLazyBreak, after)(code);
     }
-    effects.enter('codeFencedFenceInfo');
-    effects.enter('chunkString', {
-      contentType: 'string'
+    effects.enter("codeFencedFenceInfo");
+    effects.enter("chunkString", {
+      contentType: "string"
     });
-    return info(code)
+    return info(code);
   }
   function info(code) {
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('chunkString');
-      effects.exit('codeFencedFenceInfo');
-      return infoBefore(code)
+      effects.exit("chunkString");
+      effects.exit("codeFencedFenceInfo");
+      return infoBefore(code);
     }
     if (markdownSpace(code)) {
-      effects.exit('chunkString');
-      effects.exit('codeFencedFenceInfo');
-      return factorySpace(effects, metaBefore, 'whitespace')(code)
+      effects.exit("chunkString");
+      effects.exit("codeFencedFenceInfo");
+      return factorySpace(effects, metaBefore, "whitespace")(code);
     }
     if (code === 96 && code === marker) {
-      return nok(code)
+      return nok(code);
     }
     effects.consume(code);
-    return info
+    return info;
   }
   function metaBefore(code) {
     if (code === null || markdownLineEnding(code)) {
-      return infoBefore(code)
+      return infoBefore(code);
     }
-    effects.enter('codeFencedFenceMeta');
-    effects.enter('chunkString', {
-      contentType: 'string'
+    effects.enter("codeFencedFenceMeta");
+    effects.enter("chunkString", {
+      contentType: "string"
     });
-    return meta(code)
+    return meta(code);
   }
   function meta(code) {
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('chunkString');
-      effects.exit('codeFencedFenceMeta');
-      return infoBefore(code)
+      effects.exit("chunkString");
+      effects.exit("codeFencedFenceMeta");
+      return infoBefore(code);
     }
     if (code === 96 && code === marker) {
-      return nok(code)
+      return nok(code);
     }
     effects.consume(code);
-    return meta
+    return meta;
   }
   function atNonLazyBreak(code) {
-    return effects.attempt(closeStart, after, contentBefore)(code)
+    return effects.attempt(closeStart, after, contentBefore)(code);
   }
   function contentBefore(code) {
-    effects.enter('lineEnding');
+    effects.enter("lineEnding");
     effects.consume(code);
-    effects.exit('lineEnding');
-    return contentStart
+    effects.exit("lineEnding");
+    return contentStart;
   }
   function contentStart(code) {
-    return initialPrefix > 0 && markdownSpace(code)
-      ? factorySpace(
-          effects,
-          beforeContentChunk,
-          'linePrefix',
-          initialPrefix + 1
-        )(code)
-      : beforeContentChunk(code)
+    return initialPrefix > 0 && markdownSpace(code) ? factorySpace(effects, beforeContentChunk, "linePrefix", initialPrefix + 1)(code) : beforeContentChunk(code);
   }
   function beforeContentChunk(code) {
     if (code === null || markdownLineEnding(code)) {
-      return effects.check(nonLazyContinuation, atNonLazyBreak, after)(code)
+      return effects.check(nonLazyContinuation, atNonLazyBreak, after)(code);
     }
-    effects.enter('codeFlowValue');
-    return contentChunk(code)
+    effects.enter("codeFlowValue");
+    return contentChunk(code);
   }
   function contentChunk(code) {
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('codeFlowValue');
-      return beforeContentChunk(code)
+      effects.exit("codeFlowValue");
+      return beforeContentChunk(code);
     }
     effects.consume(code);
-    return contentChunk
+    return contentChunk;
   }
   function after(code) {
-    effects.exit('codeFenced');
-    return ok(code)
+    effects.exit("codeFenced");
+    return ok(code);
   }
   function tokenizeCloseStart(effects, ok, nok) {
     let size = 0;
-    return startBefore
+    return startBefore;
     function startBefore(code) {
-      effects.enter('lineEnding');
+      effects.enter("lineEnding");
       effects.consume(code);
-      effects.exit('lineEnding');
-      return start
+      effects.exit("lineEnding");
+      return start;
     }
     function start(code) {
-      effects.enter('codeFencedFence');
-      return markdownSpace(code)
-        ? factorySpace(
-            effects,
-            beforeSequenceClose,
-            'linePrefix',
-            self.parser.constructs.disable.null.includes('codeIndented')
-              ? undefined
-              : 4
-          )(code)
-        : beforeSequenceClose(code)
+      effects.enter("codeFencedFence");
+      return markdownSpace(code) ? factorySpace(effects, beforeSequenceClose, "linePrefix", self.parser.constructs.disable.null.includes('codeIndented') ? undefined : 4)(code) : beforeSequenceClose(code);
     }
     function beforeSequenceClose(code) {
       if (code === marker) {
-        effects.enter('codeFencedFenceSequence');
-        return sequenceClose(code)
+        effects.enter("codeFencedFenceSequence");
+        return sequenceClose(code);
       }
-      return nok(code)
+      return nok(code);
     }
     function sequenceClose(code) {
       if (code === marker) {
         size++;
         effects.consume(code);
-        return sequenceClose
+        return sequenceClose;
       }
       if (size >= sizeOpen) {
-        effects.exit('codeFencedFenceSequence');
-        return markdownSpace(code)
-          ? factorySpace(effects, sequenceCloseAfter, 'whitespace')(code)
-          : sequenceCloseAfter(code)
+        effects.exit("codeFencedFenceSequence");
+        return markdownSpace(code) ? factorySpace(effects, sequenceCloseAfter, "whitespace")(code) : sequenceCloseAfter(code);
       }
-      return nok(code)
+      return nok(code);
     }
     function sequenceCloseAfter(code) {
       if (code === null || markdownLineEnding(code)) {
-        effects.exit('codeFencedFence');
-        return ok(code)
+        effects.exit("codeFencedFence");
+        return ok(code);
       }
-      return nok(code)
+      return nok(code);
     }
   }
 }
 function tokenizeNonLazyContinuation(effects, ok, nok) {
   const self = this;
-  return start
+  return start;
   function start(code) {
     if (code === null) {
-      return nok(code)
+      return nok(code);
     }
-    effects.enter('lineEnding');
+    effects.enter("lineEnding");
     effects.consume(code);
-    effects.exit('lineEnding');
-    return lineStart
+    effects.exit("lineEnding");
+    return lineStart;
   }
   function lineStart(code) {
-    return self.parser.lazy[self.now().line] ? nok(code) : ok(code)
+    return self.parser.lazy[self.now().line] ? nok(code) : ok(code);
   }
 }
 
@@ -3977,66 +3980,56 @@ const furtherStart = {
 };
 function tokenizeCodeIndented(effects, ok, nok) {
   const self = this;
-  return start
+  return start;
   function start(code) {
-    effects.enter('codeIndented');
-    return factorySpace(effects, afterPrefix, 'linePrefix', 4 + 1)(code)
+    effects.enter("codeIndented");
+    return factorySpace(effects, afterPrefix, "linePrefix", 4 + 1)(code);
   }
   function afterPrefix(code) {
     const tail = self.events[self.events.length - 1];
-    return tail &&
-      tail[1].type === 'linePrefix' &&
-      tail[2].sliceSerialize(tail[1], true).length >= 4
-      ? atBreak(code)
-      : nok(code)
+    return tail && tail[1].type === "linePrefix" && tail[2].sliceSerialize(tail[1], true).length >= 4 ? atBreak(code) : nok(code);
   }
   function atBreak(code) {
     if (code === null) {
-      return after(code)
+      return after(code);
     }
     if (markdownLineEnding(code)) {
-      return effects.attempt(furtherStart, atBreak, after)(code)
+      return effects.attempt(furtherStart, atBreak, after)(code);
     }
-    effects.enter('codeFlowValue');
-    return inside(code)
+    effects.enter("codeFlowValue");
+    return inside(code);
   }
   function inside(code) {
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('codeFlowValue');
-      return atBreak(code)
+      effects.exit("codeFlowValue");
+      return atBreak(code);
     }
     effects.consume(code);
-    return inside
+    return inside;
   }
   function after(code) {
-    effects.exit('codeIndented');
-    return ok(code)
+    effects.exit("codeIndented");
+    return ok(code);
   }
 }
 function tokenizeFurtherStart(effects, ok, nok) {
   const self = this;
-  return furtherStart
+  return furtherStart;
   function furtherStart(code) {
     if (self.parser.lazy[self.now().line]) {
-      return nok(code)
+      return nok(code);
     }
     if (markdownLineEnding(code)) {
-      effects.enter('lineEnding');
+      effects.enter("lineEnding");
       effects.consume(code);
-      effects.exit('lineEnding');
-      return furtherStart
+      effects.exit("lineEnding");
+      return furtherStart;
     }
-    return factorySpace(effects, afterPrefix, 'linePrefix', 4 + 1)(code)
+    return factorySpace(effects, afterPrefix, "linePrefix", 4 + 1)(code);
   }
   function afterPrefix(code) {
     const tail = self.events[self.events.length - 1];
-    return tail &&
-      tail[1].type === 'linePrefix' &&
-      tail[2].sliceSerialize(tail[1], true).length >= 4
-      ? ok(code)
-      : markdownLineEnding(code)
-      ? furtherStart(code)
-      : nok(code)
+    return tail && tail[1].type === "linePrefix" && tail[2].sliceSerialize(tail[1], true).length >= 4 ? ok(code) : markdownLineEnding(code) ? furtherStart(code) : nok(code);
   }
 }
 
@@ -4051,20 +4044,15 @@ function resolveCodeText(events) {
   let headEnterIndex = 3;
   let index;
   let enter;
-  if (
-    (events[headEnterIndex][1].type === 'lineEnding' ||
-      events[headEnterIndex][1].type === 'space') &&
-    (events[tailExitIndex][1].type === 'lineEnding' ||
-      events[tailExitIndex][1].type === 'space')
-  ) {
+  if ((events[headEnterIndex][1].type === "lineEnding" || events[headEnterIndex][1].type === 'space') && (events[tailExitIndex][1].type === "lineEnding" || events[tailExitIndex][1].type === 'space')) {
     index = headEnterIndex;
     while (++index < tailExitIndex) {
-      if (events[index][1].type === 'codeTextData') {
-        events[headEnterIndex][1].type = 'codeTextPadding';
-        events[tailExitIndex][1].type = 'codeTextPadding';
+      if (events[index][1].type === "codeTextData") {
+        events[headEnterIndex][1].type = "codeTextPadding";
+        events[tailExitIndex][1].type = "codeTextPadding";
         headEnterIndex += 2;
         tailExitIndex -= 2;
-        break
+        break;
       }
     }
   }
@@ -4072,14 +4060,11 @@ function resolveCodeText(events) {
   tailExitIndex++;
   while (++index <= tailExitIndex) {
     if (enter === undefined) {
-      if (index !== tailExitIndex && events[index][1].type !== 'lineEnding') {
+      if (index !== tailExitIndex && events[index][1].type !== "lineEnding") {
         enter = index;
       }
-    } else if (
-      index === tailExitIndex ||
-      events[index][1].type === 'lineEnding'
-    ) {
-      events[enter][1].type = 'codeTextData';
+    } else if (index === tailExitIndex || events[index][1].type === "lineEnding") {
+      events[enter][1].type = "codeTextData";
       if (index !== enter + 2) {
         events[enter][1].end = events[index - 1][1].end;
         events.splice(enter + 2, index - enter - 2);
@@ -4089,87 +4074,158 @@ function resolveCodeText(events) {
       enter = undefined;
     }
   }
-  return events
+  return events;
 }
 function previous$1(code) {
-  return (
-    code !== 96 ||
-    this.events[this.events.length - 1][1].type === 'characterEscape'
-  )
+  return code !== 96 || this.events[this.events.length - 1][1].type === "characterEscape";
 }
 function tokenizeCodeText(effects, ok, nok) {
   let sizeOpen = 0;
   let size;
   let token;
-  return start
+  return start;
   function start(code) {
-    effects.enter('codeText');
-    effects.enter('codeTextSequence');
-    return sequenceOpen(code)
+    effects.enter("codeText");
+    effects.enter("codeTextSequence");
+    return sequenceOpen(code);
   }
   function sequenceOpen(code) {
     if (code === 96) {
       effects.consume(code);
       sizeOpen++;
-      return sequenceOpen
+      return sequenceOpen;
     }
-    effects.exit('codeTextSequence');
-    return between(code)
+    effects.exit("codeTextSequence");
+    return between(code);
   }
   function between(code) {
     if (code === null) {
-      return nok(code)
+      return nok(code);
     }
     if (code === 32) {
       effects.enter('space');
       effects.consume(code);
       effects.exit('space');
-      return between
+      return between;
     }
     if (code === 96) {
-      token = effects.enter('codeTextSequence');
+      token = effects.enter("codeTextSequence");
       size = 0;
-      return sequenceClose(code)
+      return sequenceClose(code);
     }
     if (markdownLineEnding(code)) {
-      effects.enter('lineEnding');
+      effects.enter("lineEnding");
       effects.consume(code);
-      effects.exit('lineEnding');
-      return between
+      effects.exit("lineEnding");
+      return between;
     }
-    effects.enter('codeTextData');
-    return data(code)
+    effects.enter("codeTextData");
+    return data(code);
   }
   function data(code) {
-    if (
-      code === null ||
-      code === 32 ||
-      code === 96 ||
-      markdownLineEnding(code)
-    ) {
-      effects.exit('codeTextData');
-      return between(code)
+    if (code === null || code === 32 || code === 96 || markdownLineEnding(code)) {
+      effects.exit("codeTextData");
+      return between(code);
     }
     effects.consume(code);
-    return data
+    return data;
   }
   function sequenceClose(code) {
     if (code === 96) {
       effects.consume(code);
       size++;
-      return sequenceClose
+      return sequenceClose;
     }
     if (size === sizeOpen) {
-      effects.exit('codeTextSequence');
-      effects.exit('codeText');
-      return ok(code)
+      effects.exit("codeTextSequence");
+      effects.exit("codeText");
+      return ok(code);
     }
-    token.type = 'codeTextData';
-    return data(code)
+    token.type = "codeTextData";
+    return data(code);
   }
 }
 
-function subtokenize(events) {
+class SpliceBuffer {
+  constructor(initial) {
+    this.left = initial ? [...initial] : [];
+    this.right = [];
+  }
+  get(index) {
+    if (index < 0 || index >= this.left.length + this.right.length) {
+      throw new RangeError('Cannot access index `' + index + '` in a splice buffer of size `' + (this.left.length + this.right.length) + '`');
+    }
+    if (index < this.left.length) return this.left[index];
+    return this.right[this.right.length - index + this.left.length - 1];
+  }
+  get length() {
+    return this.left.length + this.right.length;
+  }
+  shift() {
+    this.setCursor(0);
+    return this.right.pop();
+  }
+  slice(start, end) {
+    const stop = end === null || end === undefined ? Number.POSITIVE_INFINITY : end;
+    if (stop < this.left.length) {
+      return this.left.slice(start, stop);
+    }
+    if (start > this.left.length) {
+      return this.right.slice(this.right.length - stop + this.left.length, this.right.length - start + this.left.length).reverse();
+    }
+    return this.left.slice(start).concat(this.right.slice(this.right.length - stop + this.left.length).reverse());
+  }
+  splice(start, deleteCount, items) {
+    const count = deleteCount || 0;
+    this.setCursor(Math.trunc(start));
+    const removed = this.right.splice(this.right.length - count, Number.POSITIVE_INFINITY);
+    if (items) chunkedPush(this.left, items);
+    return removed.reverse();
+  }
+  pop() {
+    this.setCursor(Number.POSITIVE_INFINITY);
+    return this.left.pop();
+  }
+  push(item) {
+    this.setCursor(Number.POSITIVE_INFINITY);
+    this.left.push(item);
+  }
+  pushMany(items) {
+    this.setCursor(Number.POSITIVE_INFINITY);
+    chunkedPush(this.left, items);
+  }
+  unshift(item) {
+    this.setCursor(0);
+    this.right.push(item);
+  }
+  unshiftMany(items) {
+    this.setCursor(0);
+    chunkedPush(this.right, items.reverse());
+  }
+  setCursor(n) {
+    if (n === this.left.length || n > this.left.length && this.right.length === 0 || n < 0 && this.left.length === 0) return;
+    if (n < this.left.length) {
+      const removed = this.left.splice(n, Number.POSITIVE_INFINITY);
+      chunkedPush(this.right, removed.reverse());
+    } else {
+      const removed = this.right.splice(this.left.length + this.right.length - n, Number.POSITIVE_INFINITY);
+      chunkedPush(this.left, removed.reverse());
+    }
+  }
+}
+function chunkedPush(list, right) {
+  let chunkStart = 0;
+  if (right.length < 10000) {
+    list.push(...right);
+  } else {
+    while (chunkStart < right.length) {
+      list.push(...right.slice(chunkStart, chunkStart + 10000));
+      chunkStart += 10000;
+    }
+  }
+}
+
+function subtokenize(eventsArray) {
   const jumps = {};
   let index = -1;
   let event;
@@ -4179,33 +4235,24 @@ function subtokenize(events) {
   let parameters;
   let subevents;
   let more;
+  const events = new SpliceBuffer(eventsArray);
   while (++index < events.length) {
     while (index in jumps) {
       index = jumps[index];
     }
-    event = events[index];
-    if (
-      index &&
-      event[1].type === 'chunkFlow' &&
-      events[index - 1][1].type === 'listItemPrefix'
-    ) {
+    event = events.get(index);
+    if (index && event[1].type === "chunkFlow" && events.get(index - 1)[1].type === "listItemPrefix") {
       subevents = event[1]._tokenizer.events;
       otherIndex = 0;
-      if (
-        otherIndex < subevents.length &&
-        subevents[otherIndex][1].type === 'lineEndingBlank'
-      ) {
+      if (otherIndex < subevents.length && subevents[otherIndex][1].type === "lineEndingBlank") {
         otherIndex += 2;
       }
-      if (
-        otherIndex < subevents.length &&
-        subevents[otherIndex][1].type === 'content'
-      ) {
+      if (otherIndex < subevents.length && subevents[otherIndex][1].type === "content") {
         while (++otherIndex < subevents.length) {
-          if (subevents[otherIndex][1].type === 'content') {
-            break
+          if (subevents[otherIndex][1].type === "content") {
+            break;
           }
-          if (subevents[otherIndex][1].type === 'chunkText') {
+          if (subevents[otherIndex][1].type === "chunkText") {
             subevents[otherIndex][1]._isInFirstContentOfListItem = true;
             otherIndex++;
           }
@@ -4223,39 +4270,36 @@ function subtokenize(events) {
       otherIndex = index;
       lineIndex = undefined;
       while (otherIndex--) {
-        otherEvent = events[otherIndex];
-        if (
-          otherEvent[1].type === 'lineEnding' ||
-          otherEvent[1].type === 'lineEndingBlank'
-        ) {
+        otherEvent = events.get(otherIndex);
+        if (otherEvent[1].type === "lineEnding" || otherEvent[1].type === "lineEndingBlank") {
           if (otherEvent[0] === 'enter') {
             if (lineIndex) {
-              events[lineIndex][1].type = 'lineEndingBlank';
+              events.get(lineIndex)[1].type = "lineEndingBlank";
             }
-            otherEvent[1].type = 'lineEnding';
+            otherEvent[1].type = "lineEnding";
             lineIndex = otherIndex;
           }
         } else {
-          break
+          break;
         }
       }
       if (lineIndex) {
-        event[1].end = Object.assign({}, events[lineIndex][1].start);
+        event[1].end = Object.assign({}, events.get(lineIndex)[1].start);
         parameters = events.slice(lineIndex, index);
         parameters.unshift(event);
-        splice(events, lineIndex, index - lineIndex + 1, parameters);
+        events.splice(lineIndex, index - lineIndex + 1, parameters);
       }
     }
   }
-  return !more
+  splice(eventsArray, 0, Number.POSITIVE_INFINITY, events.slice(0));
+  return !more;
 }
 function subcontent(events, eventIndex) {
-  const token = events[eventIndex][1];
-  const context = events[eventIndex][2];
+  const token = events.get(eventIndex)[1];
+  const context = events.get(eventIndex)[2];
   let startPosition = eventIndex - 1;
   const startPositions = [];
-  const tokenizer =
-    token._tokenizer || context.parser[token.contentType](token.start);
+  const tokenizer = token._tokenizer || context.parser[token.contentType](token.start);
   const childEvents = tokenizer.events;
   const jumps = [];
   const gaps = {};
@@ -4267,7 +4311,7 @@ function subcontent(events, eventIndex) {
   let start = 0;
   const breaks = [start];
   while (current) {
-    while (events[++startPosition][1] !== current) {
+    while (events.get(++startPosition)[1] !== current) {
     }
     startPositions.push(startPosition);
     if (!current._tokenizer) {
@@ -4292,11 +4336,7 @@ function subcontent(events, eventIndex) {
   current = token;
   while (++index < childEvents.length) {
     if (
-      childEvents[index][0] === 'exit' &&
-      childEvents[index - 1][0] === 'enter' &&
-      childEvents[index][1].type === childEvents[index - 1][1].type &&
-      childEvents[index][1].start.line !== childEvents[index][1].end.line
-    ) {
+    childEvents[index][0] === 'exit' && childEvents[index - 1][0] === 'enter' && childEvents[index][1].type === childEvents[index - 1][1].type && childEvents[index][1].start.line !== childEvents[index][1].end.line) {
       start = index + 1;
       breaks.push(start);
       current._tokenizer = undefined;
@@ -4315,15 +4355,16 @@ function subcontent(events, eventIndex) {
   while (index--) {
     const slice = childEvents.slice(breaks[index], breaks[index + 1]);
     const start = startPositions.pop();
-    jumps.unshift([start, start + slice.length - 1]);
-    splice(events, start, 2, slice);
+    jumps.push([start, start + slice.length - 1]);
+    events.splice(start, 2, slice);
   }
+  jumps.reverse();
   index = -1;
   while (++index < jumps.length) {
     gaps[adjust + jumps[index][0]] = adjust + jumps[index][1];
     adjust += jumps[index][1] - jumps[index][0] - 1;
   }
-  return gaps
+  return gaps;
 }
 
 const content = {
@@ -4336,72 +4377,63 @@ const continuationConstruct = {
 };
 function resolveContent(events) {
   subtokenize(events);
-  return events
+  return events;
 }
 function tokenizeContent(effects, ok) {
   let previous;
-  return chunkStart
+  return chunkStart;
   function chunkStart(code) {
-    effects.enter('content');
-    previous = effects.enter('chunkContent', {
-      contentType: 'content'
+    effects.enter("content");
+    previous = effects.enter("chunkContent", {
+      contentType: "content"
     });
-    return chunkInside(code)
+    return chunkInside(code);
   }
   function chunkInside(code) {
     if (code === null) {
-      return contentEnd(code)
+      return contentEnd(code);
     }
     if (markdownLineEnding(code)) {
-      return effects.check(
-        continuationConstruct,
-        contentContinue,
-        contentEnd
-      )(code)
+      return effects.check(continuationConstruct, contentContinue, contentEnd)(code);
     }
     effects.consume(code);
-    return chunkInside
+    return chunkInside;
   }
   function contentEnd(code) {
-    effects.exit('chunkContent');
-    effects.exit('content');
-    return ok(code)
+    effects.exit("chunkContent");
+    effects.exit("content");
+    return ok(code);
   }
   function contentContinue(code) {
     effects.consume(code);
-    effects.exit('chunkContent');
-    previous.next = effects.enter('chunkContent', {
-      contentType: 'content',
+    effects.exit("chunkContent");
+    previous.next = effects.enter("chunkContent", {
+      contentType: "content",
       previous
     });
     previous = previous.next;
-    return chunkInside
+    return chunkInside;
   }
 }
 function tokenizeContinuation(effects, ok, nok) {
   const self = this;
-  return startLookahead
+  return startLookahead;
   function startLookahead(code) {
-    effects.exit('chunkContent');
-    effects.enter('lineEnding');
+    effects.exit("chunkContent");
+    effects.enter("lineEnding");
     effects.consume(code);
-    effects.exit('lineEnding');
-    return factorySpace(effects, prefixed, 'linePrefix')
+    effects.exit("lineEnding");
+    return factorySpace(effects, prefixed, "linePrefix");
   }
   function prefixed(code) {
     if (code === null || markdownLineEnding(code)) {
-      return nok(code)
+      return nok(code);
     }
     const tail = self.events[self.events.length - 1];
-    if (
-      !self.parser.constructs.disable.null.includes('codeIndented') &&
-      tail &&
-      tail[1].type === 'linePrefix' &&
-      tail[2].sliceSerialize(tail[1], true).length >= 4
-    ) {
-      return ok(code)
+    if (!self.parser.constructs.disable.null.includes('codeIndented') && tail && tail[1].type === "linePrefix" && tail[2].sliceSerialize(tail[1], true).length >= 4) {
+      return ok(code);
     }
-    return effects.interrupt(self.parser.constructs.flow, nok, ok)(code)
+    return effects.interrupt(self.parser.constructs.flow, nok, ok)(code);
   }
 }
 
@@ -4661,16 +4693,6 @@ function factoryWhitespace(effects, ok) {
   }
 }
 
-function normalizeIdentifier(value) {
-  return (
-    value
-      .replace(/[\t\n\r ]+/g, ' ')
-      .replace(/^ | $/g, '')
-      .toLowerCase()
-      .toUpperCase()
-  )
-}
-
 const definition$1 = {
   name: 'definition',
   tokenize: tokenizeDefinition
@@ -4682,92 +4704,60 @@ const titleBefore = {
 function tokenizeDefinition(effects, ok, nok) {
   const self = this;
   let identifier;
-  return start
+  return start;
   function start(code) {
-    effects.enter('definition');
-    return before(code)
+    effects.enter("definition");
+    return before(code);
   }
   function before(code) {
-    return factoryLabel.call(
-      self,
-      effects,
-      labelAfter,
-      nok,
-      'definitionLabel',
-      'definitionLabelMarker',
-      'definitionLabelString'
-    )(code)
+    return factoryLabel.call(self, effects, labelAfter,
+    nok, "definitionLabel", "definitionLabelMarker", "definitionLabelString")(code);
   }
   function labelAfter(code) {
-    identifier = normalizeIdentifier(
-      self.sliceSerialize(self.events[self.events.length - 1][1]).slice(1, -1)
-    );
+    identifier = normalizeIdentifier(self.sliceSerialize(self.events[self.events.length - 1][1]).slice(1, -1));
     if (code === 58) {
-      effects.enter('definitionMarker');
+      effects.enter("definitionMarker");
       effects.consume(code);
-      effects.exit('definitionMarker');
-      return markerAfter
+      effects.exit("definitionMarker");
+      return markerAfter;
     }
-    return nok(code)
+    return nok(code);
   }
   function markerAfter(code) {
-    return markdownLineEndingOrSpace(code)
-      ? factoryWhitespace(effects, destinationBefore)(code)
-      : destinationBefore(code)
+    return markdownLineEndingOrSpace(code) ? factoryWhitespace(effects, destinationBefore)(code) : destinationBefore(code);
   }
   function destinationBefore(code) {
-    return factoryDestination(
-      effects,
-      destinationAfter,
-      nok,
-      'definitionDestination',
-      'definitionDestinationLiteral',
-      'definitionDestinationLiteralMarker',
-      'definitionDestinationRaw',
-      'definitionDestinationString'
-    )(code)
+    return factoryDestination(effects, destinationAfter,
+    nok, "definitionDestination", "definitionDestinationLiteral", "definitionDestinationLiteralMarker", "definitionDestinationRaw", "definitionDestinationString")(code);
   }
   function destinationAfter(code) {
-    return effects.attempt(titleBefore, after, after)(code)
+    return effects.attempt(titleBefore, after, after)(code);
   }
   function after(code) {
-    return markdownSpace(code)
-      ? factorySpace(effects, afterWhitespace, 'whitespace')(code)
-      : afterWhitespace(code)
+    return markdownSpace(code) ? factorySpace(effects, afterWhitespace, "whitespace")(code) : afterWhitespace(code);
   }
   function afterWhitespace(code) {
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('definition');
+      effects.exit("definition");
       self.parser.defined.push(identifier);
-      return ok(code)
+      return ok(code);
     }
-    return nok(code)
+    return nok(code);
   }
 }
 function tokenizeTitleBefore(effects, ok, nok) {
-  return titleBefore
+  return titleBefore;
   function titleBefore(code) {
-    return markdownLineEndingOrSpace(code)
-      ? factoryWhitespace(effects, beforeMarker)(code)
-      : nok(code)
+    return markdownLineEndingOrSpace(code) ? factoryWhitespace(effects, beforeMarker)(code) : nok(code);
   }
   function beforeMarker(code) {
-    return factoryTitle(
-      effects,
-      titleAfter,
-      nok,
-      'definitionTitle',
-      'definitionTitleMarker',
-      'definitionTitleString'
-    )(code)
+    return factoryTitle(effects, titleAfter, nok, "definitionTitle", "definitionTitleMarker", "definitionTitleString")(code);
   }
   function titleAfter(code) {
-    return markdownSpace(code)
-      ? factorySpace(effects, titleAfterOptionalWhitespace, 'whitespace')(code)
-      : titleAfterOptionalWhitespace(code)
+    return markdownSpace(code) ? factorySpace(effects, titleAfterOptionalWhitespace, "whitespace")(code) : titleAfterOptionalWhitespace(code);
   }
   function titleAfterOptionalWhitespace(code) {
-    return code === null || markdownLineEnding(code) ? ok(code) : nok(code)
+    return code === null || markdownLineEnding(code) ? ok(code) : nok(code);
   }
 }
 
@@ -4776,18 +4766,18 @@ const hardBreakEscape = {
   tokenize: tokenizeHardBreakEscape
 };
 function tokenizeHardBreakEscape(effects, ok, nok) {
-  return start
+  return start;
   function start(code) {
-    effects.enter('hardBreakEscape');
+    effects.enter("hardBreakEscape");
     effects.consume(code);
-    return after
+    return after;
   }
   function after(code) {
     if (markdownLineEnding(code)) {
-      effects.exit('hardBreakEscape');
-      return ok(code)
+      effects.exit("hardBreakEscape");
+      return ok(code);
     }
-    return nok(code)
+    return nok(code);
   }
 }
 
@@ -4801,96 +4791,83 @@ function resolveHeadingAtx(events, context) {
   let contentStart = 3;
   let content;
   let text;
-  if (events[contentStart][1].type === 'whitespace') {
+  if (events[contentStart][1].type === "whitespace") {
     contentStart += 2;
   }
-  if (
-    contentEnd - 2 > contentStart &&
-    events[contentEnd][1].type === 'whitespace'
-  ) {
+  if (contentEnd - 2 > contentStart && events[contentEnd][1].type === "whitespace") {
     contentEnd -= 2;
   }
-  if (
-    events[contentEnd][1].type === 'atxHeadingSequence' &&
-    (contentStart === contentEnd - 1 ||
-      (contentEnd - 4 > contentStart &&
-        events[contentEnd - 2][1].type === 'whitespace'))
-  ) {
+  if (events[contentEnd][1].type === "atxHeadingSequence" && (contentStart === contentEnd - 1 || contentEnd - 4 > contentStart && events[contentEnd - 2][1].type === "whitespace")) {
     contentEnd -= contentStart + 1 === contentEnd ? 2 : 4;
   }
   if (contentEnd > contentStart) {
     content = {
-      type: 'atxHeadingText',
+      type: "atxHeadingText",
       start: events[contentStart][1].start,
       end: events[contentEnd][1].end
     };
     text = {
-      type: 'chunkText',
+      type: "chunkText",
       start: events[contentStart][1].start,
       end: events[contentEnd][1].end,
-      contentType: 'text'
+      contentType: "text"
     };
-    splice(events, contentStart, contentEnd - contentStart + 1, [
-      ['enter', content, context],
-      ['enter', text, context],
-      ['exit', text, context],
-      ['exit', content, context]
-    ]);
+    splice(events, contentStart, contentEnd - contentStart + 1, [['enter', content, context], ['enter', text, context], ['exit', text, context], ['exit', content, context]]);
   }
-  return events
+  return events;
 }
 function tokenizeHeadingAtx(effects, ok, nok) {
   let size = 0;
-  return start
+  return start;
   function start(code) {
-    effects.enter('atxHeading');
-    return before(code)
+    effects.enter("atxHeading");
+    return before(code);
   }
   function before(code) {
-    effects.enter('atxHeadingSequence');
-    return sequenceOpen(code)
+    effects.enter("atxHeadingSequence");
+    return sequenceOpen(code);
   }
   function sequenceOpen(code) {
     if (code === 35 && size++ < 6) {
       effects.consume(code);
-      return sequenceOpen
+      return sequenceOpen;
     }
     if (code === null || markdownLineEndingOrSpace(code)) {
-      effects.exit('atxHeadingSequence');
-      return atBreak(code)
+      effects.exit("atxHeadingSequence");
+      return atBreak(code);
     }
-    return nok(code)
+    return nok(code);
   }
   function atBreak(code) {
     if (code === 35) {
-      effects.enter('atxHeadingSequence');
-      return sequenceFurther(code)
+      effects.enter("atxHeadingSequence");
+      return sequenceFurther(code);
     }
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('atxHeading');
-      return ok(code)
+      effects.exit("atxHeading");
+      return ok(code);
     }
     if (markdownSpace(code)) {
-      return factorySpace(effects, atBreak, 'whitespace')(code)
+      return factorySpace(effects, atBreak, "whitespace")(code);
     }
-    effects.enter('atxHeadingText');
-    return data(code)
+    effects.enter("atxHeadingText");
+    return data(code);
   }
   function sequenceFurther(code) {
     if (code === 35) {
       effects.consume(code);
-      return sequenceFurther
+      return sequenceFurther;
     }
-    effects.exit('atxHeadingSequence');
-    return atBreak(code)
+    effects.exit("atxHeadingSequence");
+    return atBreak(code);
   }
   function data(code) {
     if (code === null || code === 35 || markdownLineEndingOrSpace(code)) {
-      effects.exit('atxHeadingText');
-      return atBreak(code)
+      effects.exit("atxHeadingText");
+      return atBreak(code);
     }
     effects.consume(code);
-    return data
+    return data;
   }
 }
 
@@ -4977,16 +4954,16 @@ const nonLazyContinuationStart = {
 function resolveToHtmlFlow(events) {
   let index = events.length;
   while (index--) {
-    if (events[index][0] === 'enter' && events[index][1].type === 'htmlFlow') {
-      break
+    if (events[index][0] === 'enter' && events[index][1].type === "htmlFlow") {
+      break;
     }
   }
-  if (index > 1 && events[index - 2][1].type === 'linePrefix') {
+  if (index > 1 && events[index - 2][1].type === "linePrefix") {
     events[index][1].start = events[index - 2][1].start;
     events[index + 1][1].start = events[index - 2][1].start;
     events.splice(index - 2, 2);
   }
-  return events
+  return events;
 }
 function tokenizeHtmlFlow(effects, ok, nok) {
   const self = this;
@@ -4995,385 +4972,346 @@ function tokenizeHtmlFlow(effects, ok, nok) {
   let buffer;
   let index;
   let markerB;
-  return start
+  return start;
   function start(code) {
-    return before(code)
+    return before(code);
   }
   function before(code) {
-    effects.enter('htmlFlow');
-    effects.enter('htmlFlowData');
+    effects.enter("htmlFlow");
+    effects.enter("htmlFlowData");
     effects.consume(code);
-    return open
+    return open;
   }
   function open(code) {
     if (code === 33) {
       effects.consume(code);
-      return declarationOpen
+      return declarationOpen;
     }
     if (code === 47) {
       effects.consume(code);
       closingTag = true;
-      return tagCloseStart
+      return tagCloseStart;
     }
     if (code === 63) {
       effects.consume(code);
       marker = 3;
-      return self.interrupt ? ok : continuationDeclarationInside
+      return self.interrupt ? ok : continuationDeclarationInside;
     }
     if (asciiAlpha(code)) {
       effects.consume(code);
       buffer = String.fromCharCode(code);
-      return tagName
+      return tagName;
     }
-    return nok(code)
+    return nok(code);
   }
   function declarationOpen(code) {
     if (code === 45) {
       effects.consume(code);
       marker = 2;
-      return commentOpenInside
+      return commentOpenInside;
     }
     if (code === 91) {
       effects.consume(code);
       marker = 5;
       index = 0;
-      return cdataOpenInside
+      return cdataOpenInside;
     }
     if (asciiAlpha(code)) {
       effects.consume(code);
       marker = 4;
-      return self.interrupt ? ok : continuationDeclarationInside
+      return self.interrupt ? ok : continuationDeclarationInside;
     }
-    return nok(code)
+    return nok(code);
   }
   function commentOpenInside(code) {
     if (code === 45) {
       effects.consume(code);
-      return self.interrupt ? ok : continuationDeclarationInside
+      return self.interrupt ? ok : continuationDeclarationInside;
     }
-    return nok(code)
+    return nok(code);
   }
   function cdataOpenInside(code) {
-    const value = 'CDATA[';
+    const value = "CDATA[";
     if (code === value.charCodeAt(index++)) {
       effects.consume(code);
       if (index === value.length) {
-        return self.interrupt ? ok : continuation
+        return self.interrupt ? ok : continuation;
       }
-      return cdataOpenInside
+      return cdataOpenInside;
     }
-    return nok(code)
+    return nok(code);
   }
   function tagCloseStart(code) {
     if (asciiAlpha(code)) {
       effects.consume(code);
       buffer = String.fromCharCode(code);
-      return tagName
+      return tagName;
     }
-    return nok(code)
+    return nok(code);
   }
   function tagName(code) {
-    if (
-      code === null ||
-      code === 47 ||
-      code === 62 ||
-      markdownLineEndingOrSpace(code)
-    ) {
+    if (code === null || code === 47 || code === 62 || markdownLineEndingOrSpace(code)) {
       const slash = code === 47;
       const name = buffer.toLowerCase();
       if (!slash && !closingTag && htmlRawNames.includes(name)) {
         marker = 1;
-        return self.interrupt ? ok(code) : continuation(code)
+        return self.interrupt ? ok(code) : continuation(code);
       }
       if (htmlBlockNames.includes(buffer.toLowerCase())) {
         marker = 6;
         if (slash) {
           effects.consume(code);
-          return basicSelfClosing
+          return basicSelfClosing;
         }
-        return self.interrupt ? ok(code) : continuation(code)
+        return self.interrupt ? ok(code) : continuation(code);
       }
       marker = 7;
-      return self.interrupt && !self.parser.lazy[self.now().line]
-        ? nok(code)
-        : closingTag
-        ? completeClosingTagAfter(code)
-        : completeAttributeNameBefore(code)
+      return self.interrupt && !self.parser.lazy[self.now().line] ? nok(code) : closingTag ? completeClosingTagAfter(code) : completeAttributeNameBefore(code);
     }
     if (code === 45 || asciiAlphanumeric(code)) {
       effects.consume(code);
       buffer += String.fromCharCode(code);
-      return tagName
+      return tagName;
     }
-    return nok(code)
+    return nok(code);
   }
   function basicSelfClosing(code) {
     if (code === 62) {
       effects.consume(code);
-      return self.interrupt ? ok : continuation
+      return self.interrupt ? ok : continuation;
     }
-    return nok(code)
+    return nok(code);
   }
   function completeClosingTagAfter(code) {
     if (markdownSpace(code)) {
       effects.consume(code);
-      return completeClosingTagAfter
+      return completeClosingTagAfter;
     }
-    return completeEnd(code)
+    return completeEnd(code);
   }
   function completeAttributeNameBefore(code) {
     if (code === 47) {
       effects.consume(code);
-      return completeEnd
+      return completeEnd;
     }
     if (code === 58 || code === 95 || asciiAlpha(code)) {
       effects.consume(code);
-      return completeAttributeName
+      return completeAttributeName;
     }
     if (markdownSpace(code)) {
       effects.consume(code);
-      return completeAttributeNameBefore
+      return completeAttributeNameBefore;
     }
-    return completeEnd(code)
+    return completeEnd(code);
   }
   function completeAttributeName(code) {
-    if (
-      code === 45 ||
-      code === 46 ||
-      code === 58 ||
-      code === 95 ||
-      asciiAlphanumeric(code)
-    ) {
+    if (code === 45 || code === 46 || code === 58 || code === 95 || asciiAlphanumeric(code)) {
       effects.consume(code);
-      return completeAttributeName
+      return completeAttributeName;
     }
-    return completeAttributeNameAfter(code)
+    return completeAttributeNameAfter(code);
   }
   function completeAttributeNameAfter(code) {
     if (code === 61) {
       effects.consume(code);
-      return completeAttributeValueBefore
+      return completeAttributeValueBefore;
     }
     if (markdownSpace(code)) {
       effects.consume(code);
-      return completeAttributeNameAfter
+      return completeAttributeNameAfter;
     }
-    return completeAttributeNameBefore(code)
+    return completeAttributeNameBefore(code);
   }
   function completeAttributeValueBefore(code) {
-    if (
-      code === null ||
-      code === 60 ||
-      code === 61 ||
-      code === 62 ||
-      code === 96
-    ) {
-      return nok(code)
+    if (code === null || code === 60 || code === 61 || code === 62 || code === 96) {
+      return nok(code);
     }
     if (code === 34 || code === 39) {
       effects.consume(code);
       markerB = code;
-      return completeAttributeValueQuoted
+      return completeAttributeValueQuoted;
     }
     if (markdownSpace(code)) {
       effects.consume(code);
-      return completeAttributeValueBefore
+      return completeAttributeValueBefore;
     }
-    return completeAttributeValueUnquoted(code)
+    return completeAttributeValueUnquoted(code);
   }
   function completeAttributeValueQuoted(code) {
     if (code === markerB) {
       effects.consume(code);
       markerB = null;
-      return completeAttributeValueQuotedAfter
+      return completeAttributeValueQuotedAfter;
     }
     if (code === null || markdownLineEnding(code)) {
-      return nok(code)
+      return nok(code);
     }
     effects.consume(code);
-    return completeAttributeValueQuoted
+    return completeAttributeValueQuoted;
   }
   function completeAttributeValueUnquoted(code) {
-    if (
-      code === null ||
-      code === 34 ||
-      code === 39 ||
-      code === 47 ||
-      code === 60 ||
-      code === 61 ||
-      code === 62 ||
-      code === 96 ||
-      markdownLineEndingOrSpace(code)
-    ) {
-      return completeAttributeNameAfter(code)
+    if (code === null || code === 34 || code === 39 || code === 47 || code === 60 || code === 61 || code === 62 || code === 96 || markdownLineEndingOrSpace(code)) {
+      return completeAttributeNameAfter(code);
     }
     effects.consume(code);
-    return completeAttributeValueUnquoted
+    return completeAttributeValueUnquoted;
   }
   function completeAttributeValueQuotedAfter(code) {
     if (code === 47 || code === 62 || markdownSpace(code)) {
-      return completeAttributeNameBefore(code)
+      return completeAttributeNameBefore(code);
     }
-    return nok(code)
+    return nok(code);
   }
   function completeEnd(code) {
     if (code === 62) {
       effects.consume(code);
-      return completeAfter
+      return completeAfter;
     }
-    return nok(code)
+    return nok(code);
   }
   function completeAfter(code) {
     if (code === null || markdownLineEnding(code)) {
-      return continuation(code)
+      return continuation(code);
     }
     if (markdownSpace(code)) {
       effects.consume(code);
-      return completeAfter
+      return completeAfter;
     }
-    return nok(code)
+    return nok(code);
   }
   function continuation(code) {
     if (code === 45 && marker === 2) {
       effects.consume(code);
-      return continuationCommentInside
+      return continuationCommentInside;
     }
     if (code === 60 && marker === 1) {
       effects.consume(code);
-      return continuationRawTagOpen
+      return continuationRawTagOpen;
     }
     if (code === 62 && marker === 4) {
       effects.consume(code);
-      return continuationClose
+      return continuationClose;
     }
     if (code === 63 && marker === 3) {
       effects.consume(code);
-      return continuationDeclarationInside
+      return continuationDeclarationInside;
     }
     if (code === 93 && marker === 5) {
       effects.consume(code);
-      return continuationCdataInside
+      return continuationCdataInside;
     }
     if (markdownLineEnding(code) && (marker === 6 || marker === 7)) {
-      effects.exit('htmlFlowData');
-      return effects.check(
-        blankLineBefore,
-        continuationAfter,
-        continuationStart
-      )(code)
+      effects.exit("htmlFlowData");
+      return effects.check(blankLineBefore, continuationAfter, continuationStart)(code);
     }
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('htmlFlowData');
-      return continuationStart(code)
+      effects.exit("htmlFlowData");
+      return continuationStart(code);
     }
     effects.consume(code);
-    return continuation
+    return continuation;
   }
   function continuationStart(code) {
-    return effects.check(
-      nonLazyContinuationStart,
-      continuationStartNonLazy,
-      continuationAfter
-    )(code)
+    return effects.check(nonLazyContinuationStart, continuationStartNonLazy, continuationAfter)(code);
   }
   function continuationStartNonLazy(code) {
-    effects.enter('lineEnding');
+    effects.enter("lineEnding");
     effects.consume(code);
-    effects.exit('lineEnding');
-    return continuationBefore
+    effects.exit("lineEnding");
+    return continuationBefore;
   }
   function continuationBefore(code) {
     if (code === null || markdownLineEnding(code)) {
-      return continuationStart(code)
+      return continuationStart(code);
     }
-    effects.enter('htmlFlowData');
-    return continuation(code)
+    effects.enter("htmlFlowData");
+    return continuation(code);
   }
   function continuationCommentInside(code) {
     if (code === 45) {
       effects.consume(code);
-      return continuationDeclarationInside
+      return continuationDeclarationInside;
     }
-    return continuation(code)
+    return continuation(code);
   }
   function continuationRawTagOpen(code) {
     if (code === 47) {
       effects.consume(code);
       buffer = '';
-      return continuationRawEndTag
+      return continuationRawEndTag;
     }
-    return continuation(code)
+    return continuation(code);
   }
   function continuationRawEndTag(code) {
     if (code === 62) {
       const name = buffer.toLowerCase();
       if (htmlRawNames.includes(name)) {
         effects.consume(code);
-        return continuationClose
+        return continuationClose;
       }
-      return continuation(code)
+      return continuation(code);
     }
     if (asciiAlpha(code) && buffer.length < 8) {
       effects.consume(code);
       buffer += String.fromCharCode(code);
-      return continuationRawEndTag
+      return continuationRawEndTag;
     }
-    return continuation(code)
+    return continuation(code);
   }
   function continuationCdataInside(code) {
     if (code === 93) {
       effects.consume(code);
-      return continuationDeclarationInside
+      return continuationDeclarationInside;
     }
-    return continuation(code)
+    return continuation(code);
   }
   function continuationDeclarationInside(code) {
     if (code === 62) {
       effects.consume(code);
-      return continuationClose
+      return continuationClose;
     }
     if (code === 45 && marker === 2) {
       effects.consume(code);
-      return continuationDeclarationInside
+      return continuationDeclarationInside;
     }
-    return continuation(code)
+    return continuation(code);
   }
   function continuationClose(code) {
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('htmlFlowData');
-      return continuationAfter(code)
+      effects.exit("htmlFlowData");
+      return continuationAfter(code);
     }
     effects.consume(code);
-    return continuationClose
+    return continuationClose;
   }
   function continuationAfter(code) {
-    effects.exit('htmlFlow');
-    return ok(code)
+    effects.exit("htmlFlow");
+    return ok(code);
   }
 }
 function tokenizeNonLazyContinuationStart(effects, ok, nok) {
   const self = this;
-  return start
+  return start;
   function start(code) {
     if (markdownLineEnding(code)) {
-      effects.enter('lineEnding');
+      effects.enter("lineEnding");
       effects.consume(code);
-      effects.exit('lineEnding');
-      return after
+      effects.exit("lineEnding");
+      return after;
     }
-    return nok(code)
+    return nok(code);
   }
   function after(code) {
-    return self.parser.lazy[self.now().line] ? nok(code) : ok(code)
+    return self.parser.lazy[self.now().line] ? nok(code) : ok(code);
   }
 }
 function tokenizeBlankLineBefore(effects, ok, nok) {
-  return start
+  return start;
   function start(code) {
-    effects.enter('lineEnding');
+    effects.enter("lineEnding");
     effects.consume(code);
-    effects.exit('lineEnding');
-    return effects.attempt(blankLine, ok, nok)
+    effects.exit("lineEnding");
+    return effects.attempt(blankLine, ok, nok);
   }
 }
 
@@ -5386,331 +5324,299 @@ function tokenizeHtmlText(effects, ok, nok) {
   let marker;
   let index;
   let returnState;
-  return start
+  return start;
   function start(code) {
-    effects.enter('htmlText');
-    effects.enter('htmlTextData');
+    effects.enter("htmlText");
+    effects.enter("htmlTextData");
     effects.consume(code);
-    return open
+    return open;
   }
   function open(code) {
     if (code === 33) {
       effects.consume(code);
-      return declarationOpen
+      return declarationOpen;
     }
     if (code === 47) {
       effects.consume(code);
-      return tagCloseStart
+      return tagCloseStart;
     }
     if (code === 63) {
       effects.consume(code);
-      return instruction
+      return instruction;
     }
     if (asciiAlpha(code)) {
       effects.consume(code);
-      return tagOpen
+      return tagOpen;
     }
-    return nok(code)
+    return nok(code);
   }
   function declarationOpen(code) {
     if (code === 45) {
       effects.consume(code);
-      return commentOpenInside
+      return commentOpenInside;
     }
     if (code === 91) {
       effects.consume(code);
       index = 0;
-      return cdataOpenInside
+      return cdataOpenInside;
     }
     if (asciiAlpha(code)) {
       effects.consume(code);
-      return declaration
+      return declaration;
     }
-    return nok(code)
+    return nok(code);
   }
   function commentOpenInside(code) {
     if (code === 45) {
       effects.consume(code);
-      return commentEnd
+      return commentEnd;
     }
-    return nok(code)
+    return nok(code);
   }
   function comment(code) {
     if (code === null) {
-      return nok(code)
+      return nok(code);
     }
     if (code === 45) {
       effects.consume(code);
-      return commentClose
+      return commentClose;
     }
     if (markdownLineEnding(code)) {
       returnState = comment;
-      return lineEndingBefore(code)
+      return lineEndingBefore(code);
     }
     effects.consume(code);
-    return comment
+    return comment;
   }
   function commentClose(code) {
     if (code === 45) {
       effects.consume(code);
-      return commentEnd
+      return commentEnd;
     }
-    return comment(code)
+    return comment(code);
   }
   function commentEnd(code) {
-    return code === 62
-      ? end(code)
-      : code === 45
-      ? commentClose(code)
-      : comment(code)
+    return code === 62 ? end(code) : code === 45 ? commentClose(code) : comment(code);
   }
   function cdataOpenInside(code) {
-    const value = 'CDATA[';
+    const value = "CDATA[";
     if (code === value.charCodeAt(index++)) {
       effects.consume(code);
-      return index === value.length ? cdata : cdataOpenInside
+      return index === value.length ? cdata : cdataOpenInside;
     }
-    return nok(code)
+    return nok(code);
   }
   function cdata(code) {
     if (code === null) {
-      return nok(code)
+      return nok(code);
     }
     if (code === 93) {
       effects.consume(code);
-      return cdataClose
+      return cdataClose;
     }
     if (markdownLineEnding(code)) {
       returnState = cdata;
-      return lineEndingBefore(code)
+      return lineEndingBefore(code);
     }
     effects.consume(code);
-    return cdata
+    return cdata;
   }
   function cdataClose(code) {
     if (code === 93) {
       effects.consume(code);
-      return cdataEnd
+      return cdataEnd;
     }
-    return cdata(code)
+    return cdata(code);
   }
   function cdataEnd(code) {
     if (code === 62) {
-      return end(code)
+      return end(code);
     }
     if (code === 93) {
       effects.consume(code);
-      return cdataEnd
+      return cdataEnd;
     }
-    return cdata(code)
+    return cdata(code);
   }
   function declaration(code) {
     if (code === null || code === 62) {
-      return end(code)
+      return end(code);
     }
     if (markdownLineEnding(code)) {
       returnState = declaration;
-      return lineEndingBefore(code)
+      return lineEndingBefore(code);
     }
     effects.consume(code);
-    return declaration
+    return declaration;
   }
   function instruction(code) {
     if (code === null) {
-      return nok(code)
+      return nok(code);
     }
     if (code === 63) {
       effects.consume(code);
-      return instructionClose
+      return instructionClose;
     }
     if (markdownLineEnding(code)) {
       returnState = instruction;
-      return lineEndingBefore(code)
+      return lineEndingBefore(code);
     }
     effects.consume(code);
-    return instruction
+    return instruction;
   }
   function instructionClose(code) {
-    return code === 62 ? end(code) : instruction(code)
+    return code === 62 ? end(code) : instruction(code);
   }
   function tagCloseStart(code) {
     if (asciiAlpha(code)) {
       effects.consume(code);
-      return tagClose
+      return tagClose;
     }
-    return nok(code)
+    return nok(code);
   }
   function tagClose(code) {
     if (code === 45 || asciiAlphanumeric(code)) {
       effects.consume(code);
-      return tagClose
+      return tagClose;
     }
-    return tagCloseBetween(code)
+    return tagCloseBetween(code);
   }
   function tagCloseBetween(code) {
     if (markdownLineEnding(code)) {
       returnState = tagCloseBetween;
-      return lineEndingBefore(code)
+      return lineEndingBefore(code);
     }
     if (markdownSpace(code)) {
       effects.consume(code);
-      return tagCloseBetween
+      return tagCloseBetween;
     }
-    return end(code)
+    return end(code);
   }
   function tagOpen(code) {
     if (code === 45 || asciiAlphanumeric(code)) {
       effects.consume(code);
-      return tagOpen
+      return tagOpen;
     }
     if (code === 47 || code === 62 || markdownLineEndingOrSpace(code)) {
-      return tagOpenBetween(code)
+      return tagOpenBetween(code);
     }
-    return nok(code)
+    return nok(code);
   }
   function tagOpenBetween(code) {
     if (code === 47) {
       effects.consume(code);
-      return end
+      return end;
     }
     if (code === 58 || code === 95 || asciiAlpha(code)) {
       effects.consume(code);
-      return tagOpenAttributeName
+      return tagOpenAttributeName;
     }
     if (markdownLineEnding(code)) {
       returnState = tagOpenBetween;
-      return lineEndingBefore(code)
+      return lineEndingBefore(code);
     }
     if (markdownSpace(code)) {
       effects.consume(code);
-      return tagOpenBetween
+      return tagOpenBetween;
     }
-    return end(code)
+    return end(code);
   }
   function tagOpenAttributeName(code) {
-    if (
-      code === 45 ||
-      code === 46 ||
-      code === 58 ||
-      code === 95 ||
-      asciiAlphanumeric(code)
-    ) {
+    if (code === 45 || code === 46 || code === 58 || code === 95 || asciiAlphanumeric(code)) {
       effects.consume(code);
-      return tagOpenAttributeName
+      return tagOpenAttributeName;
     }
-    return tagOpenAttributeNameAfter(code)
+    return tagOpenAttributeNameAfter(code);
   }
   function tagOpenAttributeNameAfter(code) {
     if (code === 61) {
       effects.consume(code);
-      return tagOpenAttributeValueBefore
+      return tagOpenAttributeValueBefore;
     }
     if (markdownLineEnding(code)) {
       returnState = tagOpenAttributeNameAfter;
-      return lineEndingBefore(code)
+      return lineEndingBefore(code);
     }
     if (markdownSpace(code)) {
       effects.consume(code);
-      return tagOpenAttributeNameAfter
+      return tagOpenAttributeNameAfter;
     }
-    return tagOpenBetween(code)
+    return tagOpenBetween(code);
   }
   function tagOpenAttributeValueBefore(code) {
-    if (
-      code === null ||
-      code === 60 ||
-      code === 61 ||
-      code === 62 ||
-      code === 96
-    ) {
-      return nok(code)
+    if (code === null || code === 60 || code === 61 || code === 62 || code === 96) {
+      return nok(code);
     }
     if (code === 34 || code === 39) {
       effects.consume(code);
       marker = code;
-      return tagOpenAttributeValueQuoted
+      return tagOpenAttributeValueQuoted;
     }
     if (markdownLineEnding(code)) {
       returnState = tagOpenAttributeValueBefore;
-      return lineEndingBefore(code)
+      return lineEndingBefore(code);
     }
     if (markdownSpace(code)) {
       effects.consume(code);
-      return tagOpenAttributeValueBefore
+      return tagOpenAttributeValueBefore;
     }
     effects.consume(code);
-    return tagOpenAttributeValueUnquoted
+    return tagOpenAttributeValueUnquoted;
   }
   function tagOpenAttributeValueQuoted(code) {
     if (code === marker) {
       effects.consume(code);
       marker = undefined;
-      return tagOpenAttributeValueQuotedAfter
+      return tagOpenAttributeValueQuotedAfter;
     }
     if (code === null) {
-      return nok(code)
+      return nok(code);
     }
     if (markdownLineEnding(code)) {
       returnState = tagOpenAttributeValueQuoted;
-      return lineEndingBefore(code)
+      return lineEndingBefore(code);
     }
     effects.consume(code);
-    return tagOpenAttributeValueQuoted
+    return tagOpenAttributeValueQuoted;
   }
   function tagOpenAttributeValueUnquoted(code) {
-    if (
-      code === null ||
-      code === 34 ||
-      code === 39 ||
-      code === 60 ||
-      code === 61 ||
-      code === 96
-    ) {
-      return nok(code)
+    if (code === null || code === 34 || code === 39 || code === 60 || code === 61 || code === 96) {
+      return nok(code);
     }
     if (code === 47 || code === 62 || markdownLineEndingOrSpace(code)) {
-      return tagOpenBetween(code)
+      return tagOpenBetween(code);
     }
     effects.consume(code);
-    return tagOpenAttributeValueUnquoted
+    return tagOpenAttributeValueUnquoted;
   }
   function tagOpenAttributeValueQuotedAfter(code) {
     if (code === 47 || code === 62 || markdownLineEndingOrSpace(code)) {
-      return tagOpenBetween(code)
+      return tagOpenBetween(code);
     }
-    return nok(code)
+    return nok(code);
   }
   function end(code) {
     if (code === 62) {
       effects.consume(code);
-      effects.exit('htmlTextData');
-      effects.exit('htmlText');
-      return ok
+      effects.exit("htmlTextData");
+      effects.exit("htmlText");
+      return ok;
     }
-    return nok(code)
+    return nok(code);
   }
   function lineEndingBefore(code) {
-    effects.exit('htmlTextData');
-    effects.enter('lineEnding');
+    effects.exit("htmlTextData");
+    effects.enter("lineEnding");
     effects.consume(code);
-    effects.exit('lineEnding');
-    return lineEndingAfter
+    effects.exit("lineEnding");
+    return lineEndingAfter;
   }
   function lineEndingAfter(code) {
-    return markdownSpace(code)
-      ? factorySpace(
-          effects,
-          lineEndingAfterPrefix,
-          'linePrefix',
-          self.parser.constructs.disable.null.includes('codeIndented')
-            ? undefined
-            : 4
-        )(code)
-      : lineEndingAfterPrefix(code)
+    return markdownSpace(code) ? factorySpace(effects, lineEndingAfterPrefix, "linePrefix", self.parser.constructs.disable.null.includes('codeIndented') ? undefined : 4)(code) : lineEndingAfterPrefix(code);
   }
   function lineEndingAfterPrefix(code) {
-    effects.enter('htmlTextData');
-    return returnState(code)
+    effects.enter("htmlTextData");
+    return returnState(code);
   }
 }
 
@@ -5733,17 +5639,13 @@ function resolveAllLabelEnd(events) {
   let index = -1;
   while (++index < events.length) {
     const token = events[index][1];
-    if (
-      token.type === 'labelImage' ||
-      token.type === 'labelLink' ||
-      token.type === 'labelEnd'
-    ) {
-      events.splice(index + 1, token.type === 'labelImage' ? 4 : 2);
-      token.type = 'data';
+    if (token.type === "labelImage" || token.type === "labelLink" || token.type === "labelEnd") {
+      events.splice(index + 1, token.type === "labelImage" ? 4 : 2);
+      token.type = "data";
       index++;
     }
   }
-  return events
+  return events;
 }
 function resolveToLabelEnd(events, context) {
   let index = events.length;
@@ -5755,70 +5657,48 @@ function resolveToLabelEnd(events, context) {
   while (index--) {
     token = events[index][1];
     if (open) {
-      if (
-        token.type === 'link' ||
-        (token.type === 'labelLink' && token._inactive)
-      ) {
-        break
+      if (token.type === "link" || token.type === "labelLink" && token._inactive) {
+        break;
       }
-      if (events[index][0] === 'enter' && token.type === 'labelLink') {
+      if (events[index][0] === 'enter' && token.type === "labelLink") {
         token._inactive = true;
       }
     } else if (close) {
-      if (
-        events[index][0] === 'enter' &&
-        (token.type === 'labelImage' || token.type === 'labelLink') &&
-        !token._balanced
-      ) {
+      if (events[index][0] === 'enter' && (token.type === "labelImage" || token.type === "labelLink") && !token._balanced) {
         open = index;
-        if (token.type !== 'labelLink') {
+        if (token.type !== "labelLink") {
           offset = 2;
-          break
+          break;
         }
       }
-    } else if (token.type === 'labelEnd') {
+    } else if (token.type === "labelEnd") {
       close = index;
     }
   }
   const group = {
-    type: events[open][1].type === 'labelLink' ? 'link' : 'image',
+    type: events[open][1].type === "labelLink" ? "link" : "image",
     start: Object.assign({}, events[open][1].start),
     end: Object.assign({}, events[events.length - 1][1].end)
   };
   const label = {
-    type: 'label',
+    type: "label",
     start: Object.assign({}, events[open][1].start),
     end: Object.assign({}, events[close][1].end)
   };
   const text = {
-    type: 'labelText',
+    type: "labelText",
     start: Object.assign({}, events[open + offset + 2][1].end),
     end: Object.assign({}, events[close - 2][1].start)
   };
-  media = [
-    ['enter', group, context],
-    ['enter', label, context]
-  ];
+  media = [['enter', group, context], ['enter', label, context]];
   media = push(media, events.slice(open + 1, open + offset + 3));
   media = push(media, [['enter', text, context]]);
-  media = push(
-    media,
-    resolveAll(
-      context.parser.constructs.insideSpan.null,
-      events.slice(open + offset + 4, close - 3),
-      context
-    )
-  );
-  media = push(media, [
-    ['exit', text, context],
-    events[close - 2],
-    events[close - 1],
-    ['exit', label, context]
-  ]);
+  media = push(media, resolveAll(context.parser.constructs.insideSpan.null, events.slice(open + offset + 4, close - 3), context));
+  media = push(media, [['exit', text, context], events[close - 2], events[close - 1], ['exit', label, context]]);
   media = push(media, events.slice(close + 1));
   media = push(media, [['exit', group, context]]);
   splice(events, open, events.length, media);
-  return events
+  return events;
 }
 function tokenizeLabelEnd(effects, ok, nok) {
   const self = this;
@@ -5826,182 +5706,125 @@ function tokenizeLabelEnd(effects, ok, nok) {
   let labelStart;
   let defined;
   while (index--) {
-    if (
-      (self.events[index][1].type === 'labelImage' ||
-        self.events[index][1].type === 'labelLink') &&
-      !self.events[index][1]._balanced
-    ) {
+    if ((self.events[index][1].type === "labelImage" || self.events[index][1].type === "labelLink") && !self.events[index][1]._balanced) {
       labelStart = self.events[index][1];
-      break
+      break;
     }
   }
-  return start
+  return start;
   function start(code) {
     if (!labelStart) {
-      return nok(code)
+      return nok(code);
     }
     if (labelStart._inactive) {
-      return labelEndNok(code)
+      return labelEndNok(code);
     }
-    defined = self.parser.defined.includes(
-      normalizeIdentifier(
-        self.sliceSerialize({
-          start: labelStart.end,
-          end: self.now()
-        })
-      )
-    );
-    effects.enter('labelEnd');
-    effects.enter('labelMarker');
+    defined = self.parser.defined.includes(normalizeIdentifier(self.sliceSerialize({
+      start: labelStart.end,
+      end: self.now()
+    })));
+    effects.enter("labelEnd");
+    effects.enter("labelMarker");
     effects.consume(code);
-    effects.exit('labelMarker');
-    effects.exit('labelEnd');
-    return after
+    effects.exit("labelMarker");
+    effects.exit("labelEnd");
+    return after;
   }
   function after(code) {
     if (code === 40) {
-      return effects.attempt(
-        resourceConstruct,
-        labelEndOk,
-        defined ? labelEndOk : labelEndNok
-      )(code)
+      return effects.attempt(resourceConstruct, labelEndOk, defined ? labelEndOk : labelEndNok)(code);
     }
     if (code === 91) {
-      return effects.attempt(
-        referenceFullConstruct,
-        labelEndOk,
-        defined ? referenceNotFull : labelEndNok
-      )(code)
+      return effects.attempt(referenceFullConstruct, labelEndOk, defined ? referenceNotFull : labelEndNok)(code);
     }
-    return defined ? labelEndOk(code) : labelEndNok(code)
+    return defined ? labelEndOk(code) : labelEndNok(code);
   }
   function referenceNotFull(code) {
-    return effects.attempt(
-      referenceCollapsedConstruct,
-      labelEndOk,
-      labelEndNok
-    )(code)
+    return effects.attempt(referenceCollapsedConstruct, labelEndOk, labelEndNok)(code);
   }
   function labelEndOk(code) {
-    return ok(code)
+    return ok(code);
   }
   function labelEndNok(code) {
     labelStart._balanced = true;
-    return nok(code)
+    return nok(code);
   }
 }
 function tokenizeResource(effects, ok, nok) {
-  return resourceStart
+  return resourceStart;
   function resourceStart(code) {
-    effects.enter('resource');
-    effects.enter('resourceMarker');
+    effects.enter("resource");
+    effects.enter("resourceMarker");
     effects.consume(code);
-    effects.exit('resourceMarker');
-    return resourceBefore
+    effects.exit("resourceMarker");
+    return resourceBefore;
   }
   function resourceBefore(code) {
-    return markdownLineEndingOrSpace(code)
-      ? factoryWhitespace(effects, resourceOpen)(code)
-      : resourceOpen(code)
+    return markdownLineEndingOrSpace(code) ? factoryWhitespace(effects, resourceOpen)(code) : resourceOpen(code);
   }
   function resourceOpen(code) {
     if (code === 41) {
-      return resourceEnd(code)
+      return resourceEnd(code);
     }
-    return factoryDestination(
-      effects,
-      resourceDestinationAfter,
-      resourceDestinationMissing,
-      'resourceDestination',
-      'resourceDestinationLiteral',
-      'resourceDestinationLiteralMarker',
-      'resourceDestinationRaw',
-      'resourceDestinationString',
-      32
-    )(code)
+    return factoryDestination(effects, resourceDestinationAfter, resourceDestinationMissing, "resourceDestination", "resourceDestinationLiteral", "resourceDestinationLiteralMarker", "resourceDestinationRaw", "resourceDestinationString", 32)(code);
   }
   function resourceDestinationAfter(code) {
-    return markdownLineEndingOrSpace(code)
-      ? factoryWhitespace(effects, resourceBetween)(code)
-      : resourceEnd(code)
+    return markdownLineEndingOrSpace(code) ? factoryWhitespace(effects, resourceBetween)(code) : resourceEnd(code);
   }
   function resourceDestinationMissing(code) {
-    return nok(code)
+    return nok(code);
   }
   function resourceBetween(code) {
     if (code === 34 || code === 39 || code === 40) {
-      return factoryTitle(
-        effects,
-        resourceTitleAfter,
-        nok,
-        'resourceTitle',
-        'resourceTitleMarker',
-        'resourceTitleString'
-      )(code)
+      return factoryTitle(effects, resourceTitleAfter, nok, "resourceTitle", "resourceTitleMarker", "resourceTitleString")(code);
     }
-    return resourceEnd(code)
+    return resourceEnd(code);
   }
   function resourceTitleAfter(code) {
-    return markdownLineEndingOrSpace(code)
-      ? factoryWhitespace(effects, resourceEnd)(code)
-      : resourceEnd(code)
+    return markdownLineEndingOrSpace(code) ? factoryWhitespace(effects, resourceEnd)(code) : resourceEnd(code);
   }
   function resourceEnd(code) {
     if (code === 41) {
-      effects.enter('resourceMarker');
+      effects.enter("resourceMarker");
       effects.consume(code);
-      effects.exit('resourceMarker');
-      effects.exit('resource');
-      return ok
+      effects.exit("resourceMarker");
+      effects.exit("resource");
+      return ok;
     }
-    return nok(code)
+    return nok(code);
   }
 }
 function tokenizeReferenceFull(effects, ok, nok) {
   const self = this;
-  return referenceFull
+  return referenceFull;
   function referenceFull(code) {
-    return factoryLabel.call(
-      self,
-      effects,
-      referenceFullAfter,
-      referenceFullMissing,
-      'reference',
-      'referenceMarker',
-      'referenceString'
-    )(code)
+    return factoryLabel.call(self, effects, referenceFullAfter, referenceFullMissing, "reference", "referenceMarker", "referenceString")(code);
   }
   function referenceFullAfter(code) {
-    return self.parser.defined.includes(
-      normalizeIdentifier(
-        self.sliceSerialize(self.events[self.events.length - 1][1]).slice(1, -1)
-      )
-    )
-      ? ok(code)
-      : nok(code)
+    return self.parser.defined.includes(normalizeIdentifier(self.sliceSerialize(self.events[self.events.length - 1][1]).slice(1, -1))) ? ok(code) : nok(code);
   }
   function referenceFullMissing(code) {
-    return nok(code)
+    return nok(code);
   }
 }
 function tokenizeReferenceCollapsed(effects, ok, nok) {
-  return referenceCollapsedStart
+  return referenceCollapsedStart;
   function referenceCollapsedStart(code) {
-    effects.enter('reference');
-    effects.enter('referenceMarker');
+    effects.enter("reference");
+    effects.enter("referenceMarker");
     effects.consume(code);
-    effects.exit('referenceMarker');
-    return referenceCollapsedOpen
+    effects.exit("referenceMarker");
+    return referenceCollapsedOpen;
   }
   function referenceCollapsedOpen(code) {
     if (code === 93) {
-      effects.enter('referenceMarker');
+      effects.enter("referenceMarker");
       effects.consume(code);
-      effects.exit('referenceMarker');
-      effects.exit('reference');
-      return ok
+      effects.exit("referenceMarker");
+      effects.exit("reference");
+      return ok;
     }
-    return nok(code)
+    return nok(code);
   }
 }
 
@@ -6012,28 +5835,26 @@ const labelStartImage = {
 };
 function tokenizeLabelStartImage(effects, ok, nok) {
   const self = this;
-  return start
+  return start;
   function start(code) {
-    effects.enter('labelImage');
-    effects.enter('labelImageMarker');
+    effects.enter("labelImage");
+    effects.enter("labelImageMarker");
     effects.consume(code);
-    effects.exit('labelImageMarker');
-    return open
+    effects.exit("labelImageMarker");
+    return open;
   }
   function open(code) {
     if (code === 91) {
-      effects.enter('labelMarker');
+      effects.enter("labelMarker");
       effects.consume(code);
-      effects.exit('labelMarker');
-      effects.exit('labelImage');
-      return after
+      effects.exit("labelMarker");
+      effects.exit("labelImage");
+      return after;
     }
-    return nok(code)
+    return nok(code);
   }
   function after(code) {
-    return code === 94 && '_hiddenFootnoteSupport' in self.parser.constructs
-      ? nok(code)
-      : ok(code)
+    return code === 94 && '_hiddenFootnoteSupport' in self.parser.constructs ? nok(code) : ok(code);
   }
 }
 
@@ -6044,19 +5865,17 @@ const labelStartLink = {
 };
 function tokenizeLabelStartLink(effects, ok, nok) {
   const self = this;
-  return start
+  return start;
   function start(code) {
-    effects.enter('labelLink');
-    effects.enter('labelMarker');
+    effects.enter("labelLink");
+    effects.enter("labelMarker");
     effects.consume(code);
-    effects.exit('labelMarker');
-    effects.exit('labelLink');
-    return after
+    effects.exit("labelMarker");
+    effects.exit("labelLink");
+    return after;
   }
   function after(code) {
-    return code === 94 && '_hiddenFootnoteSupport' in self.parser.constructs
-      ? nok(code)
-      : ok(code)
+    return code === 94 && '_hiddenFootnoteSupport' in self.parser.constructs ? nok(code) : ok(code);
   }
 }
 
@@ -6065,12 +5884,12 @@ const lineEnding = {
   tokenize: tokenizeLineEnding
 };
 function tokenizeLineEnding(effects, ok) {
-  return start
+  return start;
   function start(code) {
-    effects.enter('lineEnding');
+    effects.enter("lineEnding");
     effects.consume(code);
-    effects.exit('lineEnding');
-    return factorySpace(effects, ok, 'linePrefix')
+    effects.exit("lineEnding");
+    return factorySpace(effects, ok, "linePrefix");
   }
 }
 
@@ -6081,40 +5900,38 @@ const thematicBreak$1 = {
 function tokenizeThematicBreak(effects, ok, nok) {
   let size = 0;
   let marker;
-  return start
+  return start;
   function start(code) {
-    effects.enter('thematicBreak');
-    return before(code)
+    effects.enter("thematicBreak");
+    return before(code);
   }
   function before(code) {
     marker = code;
-    return atBreak(code)
+    return atBreak(code);
   }
   function atBreak(code) {
     if (code === marker) {
-      effects.enter('thematicBreakSequence');
-      return sequence(code)
+      effects.enter("thematicBreakSequence");
+      return sequence(code);
     }
     if (size >= 3 && (code === null || markdownLineEnding(code))) {
-      effects.exit('thematicBreak');
-      return ok(code)
+      effects.exit("thematicBreak");
+      return ok(code);
     }
-    return nok(code)
+    return nok(code);
   }
   function sequence(code) {
     if (code === marker) {
       effects.consume(code);
       size++;
-      return sequence
+      return sequence;
     }
-    effects.exit('thematicBreakSequence');
-    return markdownSpace(code)
-      ? factorySpace(effects, atBreak, 'whitespace')(code)
-      : atBreak(code)
+    effects.exit("thematicBreakSequence");
+    return markdownSpace(code) ? factorySpace(effects, atBreak, "whitespace")(code) : atBreak(code);
   }
 }
 
-const list$1 = {
+const list$2 = {
   name: 'list',
   tokenize: tokenizeListStart,
   continuation: {
@@ -6133,148 +5950,98 @@ const indentConstruct = {
 function tokenizeListStart(effects, ok, nok) {
   const self = this;
   const tail = self.events[self.events.length - 1];
-  let initialSize =
-    tail && tail[1].type === 'linePrefix'
-      ? tail[2].sliceSerialize(tail[1], true).length
-      : 0;
+  let initialSize = tail && tail[1].type === "linePrefix" ? tail[2].sliceSerialize(tail[1], true).length : 0;
   let size = 0;
-  return start
+  return start;
   function start(code) {
-    const kind =
-      self.containerState.type ||
-      (code === 42 || code === 43 || code === 45
-        ? 'listUnordered'
-        : 'listOrdered');
-    if (
-      kind === 'listUnordered'
-        ? !self.containerState.marker || code === self.containerState.marker
-        : asciiDigit(code)
-    ) {
+    const kind = self.containerState.type || (code === 42 || code === 43 || code === 45 ? "listUnordered" : "listOrdered");
+    if (kind === "listUnordered" ? !self.containerState.marker || code === self.containerState.marker : asciiDigit(code)) {
       if (!self.containerState.type) {
         self.containerState.type = kind;
         effects.enter(kind, {
           _container: true
         });
       }
-      if (kind === 'listUnordered') {
-        effects.enter('listItemPrefix');
-        return code === 42 || code === 45
-          ? effects.check(thematicBreak$1, nok, atMarker)(code)
-          : atMarker(code)
+      if (kind === "listUnordered") {
+        effects.enter("listItemPrefix");
+        return code === 42 || code === 45 ? effects.check(thematicBreak$1, nok, atMarker)(code) : atMarker(code);
       }
       if (!self.interrupt || code === 49) {
-        effects.enter('listItemPrefix');
-        effects.enter('listItemValue');
-        return inside(code)
+        effects.enter("listItemPrefix");
+        effects.enter("listItemValue");
+        return inside(code);
       }
     }
-    return nok(code)
+    return nok(code);
   }
   function inside(code) {
     if (asciiDigit(code) && ++size < 10) {
       effects.consume(code);
-      return inside
+      return inside;
     }
-    if (
-      (!self.interrupt || size < 2) &&
-      (self.containerState.marker
-        ? code === self.containerState.marker
-        : code === 41 || code === 46)
-    ) {
-      effects.exit('listItemValue');
-      return atMarker(code)
+    if ((!self.interrupt || size < 2) && (self.containerState.marker ? code === self.containerState.marker : code === 41 || code === 46)) {
+      effects.exit("listItemValue");
+      return atMarker(code);
     }
-    return nok(code)
+    return nok(code);
   }
   function atMarker(code) {
-    effects.enter('listItemMarker');
+    effects.enter("listItemMarker");
     effects.consume(code);
-    effects.exit('listItemMarker');
+    effects.exit("listItemMarker");
     self.containerState.marker = self.containerState.marker || code;
-    return effects.check(
-      blankLine,
-      self.interrupt ? nok : onBlank,
-      effects.attempt(
-        listItemPrefixWhitespaceConstruct,
-        endOfPrefix,
-        otherPrefix
-      )
-    )
+    return effects.check(blankLine,
+    self.interrupt ? nok : onBlank, effects.attempt(listItemPrefixWhitespaceConstruct, endOfPrefix, otherPrefix));
   }
   function onBlank(code) {
     self.containerState.initialBlankLine = true;
     initialSize++;
-    return endOfPrefix(code)
+    return endOfPrefix(code);
   }
   function otherPrefix(code) {
     if (markdownSpace(code)) {
-      effects.enter('listItemPrefixWhitespace');
+      effects.enter("listItemPrefixWhitespace");
       effects.consume(code);
-      effects.exit('listItemPrefixWhitespace');
-      return endOfPrefix
+      effects.exit("listItemPrefixWhitespace");
+      return endOfPrefix;
     }
-    return nok(code)
+    return nok(code);
   }
   function endOfPrefix(code) {
-    self.containerState.size =
-      initialSize +
-      self.sliceSerialize(effects.exit('listItemPrefix'), true).length;
-    return ok(code)
+    self.containerState.size = initialSize + self.sliceSerialize(effects.exit("listItemPrefix"), true).length;
+    return ok(code);
   }
 }
 function tokenizeListContinuation(effects, ok, nok) {
   const self = this;
   self.containerState._closeFlow = undefined;
-  return effects.check(blankLine, onBlank, notBlank)
+  return effects.check(blankLine, onBlank, notBlank);
   function onBlank(code) {
-    self.containerState.furtherBlankLines =
-      self.containerState.furtherBlankLines ||
-      self.containerState.initialBlankLine;
-    return factorySpace(
-      effects,
-      ok,
-      'listItemIndent',
-      self.containerState.size + 1
-    )(code)
+    self.containerState.furtherBlankLines = self.containerState.furtherBlankLines || self.containerState.initialBlankLine;
+    return factorySpace(effects, ok, "listItemIndent", self.containerState.size + 1)(code);
   }
   function notBlank(code) {
     if (self.containerState.furtherBlankLines || !markdownSpace(code)) {
       self.containerState.furtherBlankLines = undefined;
       self.containerState.initialBlankLine = undefined;
-      return notInCurrentItem(code)
+      return notInCurrentItem(code);
     }
     self.containerState.furtherBlankLines = undefined;
     self.containerState.initialBlankLine = undefined;
-    return effects.attempt(indentConstruct, ok, notInCurrentItem)(code)
+    return effects.attempt(indentConstruct, ok, notInCurrentItem)(code);
   }
   function notInCurrentItem(code) {
     self.containerState._closeFlow = true;
     self.interrupt = undefined;
-    return factorySpace(
-      effects,
-      effects.attempt(list$1, ok, nok),
-      'linePrefix',
-      self.parser.constructs.disable.null.includes('codeIndented')
-        ? undefined
-        : 4
-    )(code)
+    return factorySpace(effects, effects.attempt(list$2, ok, nok), "linePrefix", self.parser.constructs.disable.null.includes('codeIndented') ? undefined : 4)(code);
   }
 }
 function tokenizeIndent$1(effects, ok, nok) {
   const self = this;
-  return factorySpace(
-    effects,
-    afterPrefix,
-    'listItemIndent',
-    self.containerState.size + 1
-  )
+  return factorySpace(effects, afterPrefix, "listItemIndent", self.containerState.size + 1);
   function afterPrefix(code) {
     const tail = self.events[self.events.length - 1];
-    return tail &&
-      tail[1].type === 'listItemIndent' &&
-      tail[2].sliceSerialize(tail[1], true).length === self.containerState.size
-      ? ok(code)
-      : nok(code)
+    return tail && tail[1].type === "listItemIndent" && tail[2].sliceSerialize(tail[1], true).length === self.containerState.size ? ok(code) : nok(code);
   }
 }
 function tokenizeListEnd(effects) {
@@ -6282,21 +6049,10 @@ function tokenizeListEnd(effects) {
 }
 function tokenizeListItemPrefixWhitespace(effects, ok, nok) {
   const self = this;
-  return factorySpace(
-    effects,
-    afterPrefix,
-    'listItemPrefixWhitespace',
-    self.parser.constructs.disable.null.includes('codeIndented')
-      ? undefined
-      : 4 + 1
-  )
+  return factorySpace(effects, afterPrefix, "listItemPrefixWhitespace", self.parser.constructs.disable.null.includes('codeIndented') ? undefined : 4 + 1);
   function afterPrefix(code) {
     const tail = self.events[self.events.length - 1];
-    return !markdownSpace(code) &&
-      tail &&
-      tail[1].type === 'listItemPrefixWhitespace'
-      ? ok(code)
-      : nok(code)
+    return !markdownSpace(code) && tail && tail[1].type === "listItemPrefixWhitespace" ? ok(code) : nok(code);
   }
 }
 
@@ -6312,29 +6068,29 @@ function resolveToSetextUnderline(events, context) {
   let definition;
   while (index--) {
     if (events[index][0] === 'enter') {
-      if (events[index][1].type === 'content') {
+      if (events[index][1].type === "content") {
         content = index;
-        break
+        break;
       }
-      if (events[index][1].type === 'paragraph') {
+      if (events[index][1].type === "paragraph") {
         text = index;
       }
     }
     else {
-      if (events[index][1].type === 'content') {
+      if (events[index][1].type === "content") {
         events.splice(index, 1);
       }
-      if (!definition && events[index][1].type === 'definition') {
+      if (!definition && events[index][1].type === "definition") {
         definition = index;
       }
     }
   }
   const heading = {
-    type: 'setextHeading',
+    type: "setextHeading",
     start: Object.assign({}, events[text][1].start),
     end: Object.assign({}, events[events.length - 1][1].end)
   };
-  events[text][1].type = 'setextHeadingText';
+  events[text][1].type = "setextHeadingText";
   if (definition) {
     events.splice(text, 0, ['enter', heading, context]);
     events.splice(definition + 1, 0, ['exit', events[content][1], context]);
@@ -6343,52 +6099,46 @@ function resolveToSetextUnderline(events, context) {
     events[content][1] = heading;
   }
   events.push(['exit', heading, context]);
-  return events
+  return events;
 }
 function tokenizeSetextUnderline(effects, ok, nok) {
   const self = this;
   let marker;
-  return start
+  return start;
   function start(code) {
     let index = self.events.length;
     let paragraph;
     while (index--) {
-      if (
-        self.events[index][1].type !== 'lineEnding' &&
-        self.events[index][1].type !== 'linePrefix' &&
-        self.events[index][1].type !== 'content'
-      ) {
-        paragraph = self.events[index][1].type === 'paragraph';
-        break
+      if (self.events[index][1].type !== "lineEnding" && self.events[index][1].type !== "linePrefix" && self.events[index][1].type !== "content") {
+        paragraph = self.events[index][1].type === "paragraph";
+        break;
       }
     }
     if (!self.parser.lazy[self.now().line] && (self.interrupt || paragraph)) {
-      effects.enter('setextHeadingLine');
+      effects.enter("setextHeadingLine");
       marker = code;
-      return before(code)
+      return before(code);
     }
-    return nok(code)
+    return nok(code);
   }
   function before(code) {
-    effects.enter('setextHeadingLineSequence');
-    return inside(code)
+    effects.enter("setextHeadingLineSequence");
+    return inside(code);
   }
   function inside(code) {
     if (code === marker) {
       effects.consume(code);
-      return inside
+      return inside;
     }
-    effects.exit('setextHeadingLineSequence');
-    return markdownSpace(code)
-      ? factorySpace(effects, after, 'lineSuffix')(code)
-      : after(code)
+    effects.exit("setextHeadingLineSequence");
+    return markdownSpace(code) ? factorySpace(effects, after, "lineSuffix")(code) : after(code);
   }
   function after(code) {
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('setextHeadingLine');
-      return ok(code)
+      effects.exit("setextHeadingLine");
+      return ok(code);
     }
-    return nok(code)
+    return nok(code);
   }
 }
 
@@ -6902,19 +6652,19 @@ function serializeChunks(chunks, expandTabs) {
 }
 
 const document = {
-  [42]: list$1,
-  [43]: list$1,
-  [45]: list$1,
-  [48]: list$1,
-  [49]: list$1,
-  [50]: list$1,
-  [51]: list$1,
-  [52]: list$1,
-  [53]: list$1,
-  [54]: list$1,
-  [55]: list$1,
-  [56]: list$1,
-  [57]: list$1,
+  [42]: list$2,
+  [43]: list$2,
+  [45]: list$2,
+  [48]: list$2,
+  [49]: list$2,
+  [50]: list$2,
+  [51]: list$2,
+  [52]: list$2,
+  [53]: list$2,
+  [54]: list$2,
+  [55]: list$2,
+  [56]: list$2,
+  [57]: list$2,
   [62]: blockQuote
 };
 const contentInitial = {
@@ -6976,7 +6726,7 @@ var defaultConstructs = /*#__PURE__*/Object.freeze({
   text: text$2
 });
 
-function parse$1(options) {
+function parse$2(options) {
   const settings = options || {};
   const constructs =
     combineExtensions([defaultConstructs, ...(settings.extensions || [])]);
@@ -6999,7 +6749,13 @@ function parse$1(options) {
   }
 }
 
-const search = /[\0\t\n\r]/g;
+function postprocess(events) {
+  while (!subtokenize(events)) {
+  }
+  return events
+}
+
+const search$1 = /[\0\t\n\r]/g;
 function preprocess() {
   let column = 1;
   let buffer = '';
@@ -7013,7 +6769,11 @@ function preprocess() {
     let startPosition;
     let endPosition;
     let code;
-    value = buffer + value.toString(encoding);
+    value =
+      buffer +
+      (typeof value === 'string'
+        ? value.toString()
+        : new TextDecoder(encoding || undefined).decode(value));
     startPosition = 0;
     buffer = '';
     if (start) {
@@ -7023,8 +6783,8 @@ function preprocess() {
       start = undefined;
     }
     while (startPosition < value.length) {
-      search.lastIndex = startPosition;
-      match = search.exec(value);
+      search$1.lastIndex = startPosition;
+      match = search$1.exec(value);
       endPosition =
         match && match.index !== undefined ? match.index : value.length;
       code = value.charCodeAt(endPosition);
@@ -7078,30 +6838,6 @@ function preprocess() {
   }
 }
 
-function postprocess(events) {
-  while (!subtokenize(events)) {
-  }
-  return events
-}
-
-function decodeNumericCharacterReference(value, base) {
-  const code = Number.parseInt(value, base);
-  if (
-    code < 9 ||
-    code === 11 ||
-    (code > 13 && code < 32) ||
-    (code > 126 && code < 160) ||
-    (code > 55295 && code < 57344) ||
-    (code > 64975 && code < 65008)  ||
-    (code & 65535) === 65535 ||
-    (code & 65535) === 65534  ||
-    code > 1114111
-  ) {
-    return '\uFFFD'
-  }
-  return String.fromCharCode(code)
-}
-
 const characterEscapeOrReference =
   /\\([!-/:-@[-`{-~])|&(#(?:\d{1,7}|x[\da-f]{1,6})|[\da-z]{1,31});/gi;
 function decodeString(value) {
@@ -7120,19 +6856,14 @@ function decode($0, $1, $2) {
   return decodeNamedCharacterReference($2) || $0
 }
 
-const own$5 = {}.hasOwnProperty;
-const fromMarkdown =
-  function (value, encoding, options) {
-    if (typeof encoding !== 'string') {
-      options = encoding;
-      encoding = undefined;
-    }
-    return compiler(options)(
-      postprocess(
-        parse$1(options).document().write(preprocess()(value, encoding, true))
-      )
-    )
-  };
+const own$3 = {}.hasOwnProperty;
+function fromMarkdown(value, encoding, options) {
+  if (typeof encoding !== 'string') {
+    options = encoding;
+    encoding = undefined;
+  }
+  return compiler(options)(postprocess(parse$2(options).document().write(preprocess()(value, encoding, true))));
+}
 function compiler(options) {
   const config = {
     transforms: [],
@@ -7191,6 +6922,7 @@ function compiler(options) {
       characterReferenceMarkerHexadecimal: onexitcharacterreferencemarker,
       characterReferenceMarkerNumeric: onexitcharacterreferencemarker,
       characterReferenceValue: onexitcharacterreferencevalue,
+      characterReference: onexitcharacterreference,
       codeFenced: closer(onexitcodefenced),
       codeFencedFence: onexitcodefencedfence,
       codeFencedFenceInfo: onexitcodefencedfenceinfo,
@@ -7233,7 +6965,7 @@ function compiler(options) {
   };
   configure$1(config, (options || {}).mdastExtensions || []);
   const data = {};
-  return compile
+  return compile;
   function compile(events) {
     let tree = {
       type: 'root',
@@ -7247,16 +6979,12 @@ function compiler(options) {
       exit,
       buffer,
       resume,
-      setData,
-      getData
+      data
     };
     const listStack = [];
     let index = -1;
     while (++index < events.length) {
-      if (
-        events[index][1].type === 'listOrdered' ||
-        events[index][1].type === 'listUnordered'
-      ) {
+      if (events[index][1].type === "listOrdered" || events[index][1].type === "listUnordered") {
         if (events[index][0] === 'enter') {
           listStack.push(index);
         } else {
@@ -7268,16 +6996,10 @@ function compiler(options) {
     index = -1;
     while (++index < events.length) {
       const handler = config[events[index][0]];
-      if (own$5.call(handler, events[index][1].type)) {
-        handler[events[index][1].type].call(
-          Object.assign(
-            {
-              sliceSerialize: events[index][2].sliceSerialize
-            },
-            context
-          ),
-          events[index][1]
-        );
+      if (own$3.call(handler, events[index][1].type)) {
+        handler[events[index][1].type].call(Object.assign({
+          sliceSerialize: events[index][2].sliceSerialize
+        }, context), events[index][1]);
       }
     }
     if (context.tokenStack.length > 0) {
@@ -7286,30 +7008,22 @@ function compiler(options) {
       handler.call(context, undefined, tail[0]);
     }
     tree.position = {
-      start: point$1(
-        events.length > 0
-          ? events[0][1].start
-          : {
-              line: 1,
-              column: 1,
-              offset: 0
-            }
-      ),
-      end: point$1(
-        events.length > 0
-          ? events[events.length - 2][1].end
-          : {
-              line: 1,
-              column: 1,
-              offset: 0
-            }
-      )
+      start: point$1(events.length > 0 ? events[0][1].start : {
+        line: 1,
+        column: 1,
+        offset: 0
+      }),
+      end: point$1(events.length > 0 ? events[events.length - 2][1].end : {
+        line: 1,
+        column: 1,
+        offset: 0
+      })
     };
     index = -1;
     while (++index < config.transforms.length) {
       tree = config.transforms[index](tree) || tree;
     }
-    return tree
+    return tree;
   }
   function prepareList(events, start, length) {
     let index = start - 1;
@@ -7321,95 +7035,77 @@ function compiler(options) {
     let atMarker;
     while (++index <= length) {
       const event = events[index];
-      if (
-        event[1].type === 'listUnordered' ||
-        event[1].type === 'listOrdered' ||
-        event[1].type === 'blockQuote'
-      ) {
-        if (event[0] === 'enter') {
-          containerBalance++;
-        } else {
-          containerBalance--;
-        }
-        atMarker = undefined;
-      } else if (event[1].type === 'lineEndingBlank') {
-        if (event[0] === 'enter') {
-          if (
-            listItem &&
-            !atMarker &&
-            !containerBalance &&
-            !firstBlankLineIndex
-          ) {
-            firstBlankLineIndex = index;
+      switch (event[1].type) {
+        case "listUnordered":
+        case "listOrdered":
+        case "blockQuote":
+          {
+            if (event[0] === 'enter') {
+              containerBalance++;
+            } else {
+              containerBalance--;
+            }
+            atMarker = undefined;
+            break;
           }
-          atMarker = undefined;
-        }
-      } else if (
-        event[1].type === 'linePrefix' ||
-        event[1].type === 'listItemValue' ||
-        event[1].type === 'listItemMarker' ||
-        event[1].type === 'listItemPrefix' ||
-        event[1].type === 'listItemPrefixWhitespace'
-      ) ; else {
-        atMarker = undefined;
+        case "lineEndingBlank":
+          {
+            if (event[0] === 'enter') {
+              if (listItem && !atMarker && !containerBalance && !firstBlankLineIndex) {
+                firstBlankLineIndex = index;
+              }
+              atMarker = undefined;
+            }
+            break;
+          }
+        case "linePrefix":
+        case "listItemValue":
+        case "listItemMarker":
+        case "listItemPrefix":
+        case "listItemPrefixWhitespace":
+          {
+            break;
+          }
+        default:
+          {
+            atMarker = undefined;
+          }
       }
-      if (
-        (!containerBalance &&
-          event[0] === 'enter' &&
-          event[1].type === 'listItemPrefix') ||
-        (containerBalance === -1 &&
-          event[0] === 'exit' &&
-          (event[1].type === 'listUnordered' ||
-            event[1].type === 'listOrdered'))
-      ) {
+      if (!containerBalance && event[0] === 'enter' && event[1].type === "listItemPrefix" || containerBalance === -1 && event[0] === 'exit' && (event[1].type === "listUnordered" || event[1].type === "listOrdered")) {
         if (listItem) {
           let tailIndex = index;
           lineIndex = undefined;
           while (tailIndex--) {
             const tailEvent = events[tailIndex];
-            if (
-              tailEvent[1].type === 'lineEnding' ||
-              tailEvent[1].type === 'lineEndingBlank'
-            ) {
-              if (tailEvent[0] === 'exit') continue
+            if (tailEvent[1].type === "lineEnding" || tailEvent[1].type === "lineEndingBlank") {
+              if (tailEvent[0] === 'exit') continue;
               if (lineIndex) {
-                events[lineIndex][1].type = 'lineEndingBlank';
+                events[lineIndex][1].type = "lineEndingBlank";
                 listSpread = true;
               }
-              tailEvent[1].type = 'lineEnding';
+              tailEvent[1].type = "lineEnding";
               lineIndex = tailIndex;
-            } else if (
-              tailEvent[1].type === 'linePrefix' ||
-              tailEvent[1].type === 'blockQuotePrefix' ||
-              tailEvent[1].type === 'blockQuotePrefixWhitespace' ||
-              tailEvent[1].type === 'blockQuoteMarker' ||
-              tailEvent[1].type === 'listItemIndent'
-            ) ; else {
-              break
+            } else if (tailEvent[1].type === "linePrefix" || tailEvent[1].type === "blockQuotePrefix" || tailEvent[1].type === "blockQuotePrefixWhitespace" || tailEvent[1].type === "blockQuoteMarker" || tailEvent[1].type === "listItemIndent") ; else {
+              break;
             }
           }
-          if (
-            firstBlankLineIndex &&
-            (!lineIndex || firstBlankLineIndex < lineIndex)
-          ) {
+          if (firstBlankLineIndex && (!lineIndex || firstBlankLineIndex < lineIndex)) {
             listItem._spread = true;
           }
-          listItem.end = Object.assign(
-            {},
-            lineIndex ? events[lineIndex][1].start : event[1].end
-          );
+          listItem.end = Object.assign({}, lineIndex ? events[lineIndex][1].start : event[1].end);
           events.splice(lineIndex || index, 0, ['exit', listItem, event[2]]);
           index++;
           length++;
         }
-        if (event[1].type === 'listItemPrefix') {
-          listItem = {
+        if (event[1].type === "listItemPrefix") {
+          const item = {
             type: 'listItem',
             _spread: false,
             start: Object.assign({}, event[1].start),
             end: undefined
           };
-          events.splice(index, 0, ['enter', listItem, event[2]]);
+          listItem = item;
+          events.splice(index, 0, ['enter', item, event[2]]);
           index++;
           length++;
           firstBlankLineIndex = undefined;
@@ -7418,16 +7114,10 @@ function compiler(options) {
       }
     }
     events[start][1]._spread = listSpread;
-    return length
-  }
-  function setData(key, value) {
-    data[key] = value;
-  }
-  function getData(key) {
-    return data[key]
+    return length;
   }
   function opener(create, and) {
-    return open
+    return open;
     function open(token) {
       enter.call(this, create(token), token);
       if (and) and.call(this, token);
@@ -7441,16 +7131,17 @@ function compiler(options) {
   }
   function enter(node, token, errorHandler) {
     const parent = this.stack[this.stack.length - 1];
-    parent.children.push(node);
+    const siblings = parent.children;
+    siblings.push(node);
     this.stack.push(node);
     this.tokenStack.push([token, errorHandler]);
     node.position = {
-      start: point$1(token.start)
+      start: point$1(token.start),
+      end: undefined
     };
-    return node
   }
   function closer(and) {
-    return close
+    return close;
     function close(token) {
       if (and) and.call(this, token);
       exit.call(this, token);
@@ -7460,16 +7151,10 @@ function compiler(options) {
     const node = this.stack.pop();
     const open = this.tokenStack.pop();
     if (!open) {
-      throw new Error(
-        'Cannot close `' +
-          token.type +
-          '` (' +
-          stringifyPosition({
-            start: token.start,
-            end: token.end
-          }) +
-          '): it’s not open'
-      )
+      throw new Error('Cannot close `' + token.type + '` (' + stringifyPosition({
+        start: token.start,
+        end: token.end
+      }) + '): it’s not open');
     } else if (open[0].type !== token.type) {
       if (onExitError) {
         onExitError.call(this, token, open[0]);
@@ -7479,19 +7164,18 @@ function compiler(options) {
       }
     }
     node.position.end = point$1(token.end);
-    return node
   }
   function resume() {
-    return toString(this.stack.pop())
+    return toString(this.stack.pop());
   }
   function onenterlistordered() {
-    setData('expectingFirstListItemValue', true);
+    this.data.expectingFirstListItemValue = true;
   }
   function onenterlistitemvalue(token) {
-    if (getData('expectingFirstListItemValue')) {
+    if (this.data.expectingFirstListItemValue) {
       const ancestor = this.stack[this.stack.length - 2];
       ancestor.start = Number.parseInt(this.sliceSerialize(token), 10);
-      setData('expectingFirstListItemValue');
+      this.data.expectingFirstListItemValue = undefined;
     }
   }
   function onexitcodefencedfenceinfo() {
@@ -7505,15 +7189,15 @@ function compiler(options) {
     node.meta = data;
   }
   function onexitcodefencedfence() {
-    if (getData('flowCodeInside')) return
+    if (this.data.flowCodeInside) return;
     this.buffer();
-    setData('flowCodeInside', true);
+    this.data.flowCodeInside = true;
   }
   function onexitcodefenced() {
     const data = this.resume();
     const node = this.stack[this.stack.length - 1];
     node.value = data.replace(/^(\r?\n|\r)|(\r?\n|\r)$/g, '');
-    setData('flowCodeInside');
+    this.data.flowCodeInside = undefined;
   }
   function onexitcodeindented() {
     const data = this.resume();
@@ -7524,9 +7208,7 @@ function compiler(options) {
     const label = this.resume();
     const node = this.stack[this.stack.length - 1];
     node.label = label;
-    node.identifier = normalizeIdentifier(
-      this.sliceSerialize(token)
-    ).toLowerCase();
+    node.identifier = normalizeIdentifier(this.sliceSerialize(token)).toLowerCase();
   }
   function onexitdefinitiontitlestring() {
     const data = this.resume();
@@ -7546,24 +7228,26 @@ function compiler(options) {
     }
   }
   function onexitsetextheadingtext() {
-    setData('setextHeadingSlurpLineEnding', true);
+    this.data.setextHeadingSlurpLineEnding = true;
   }
   function onexitsetextheadinglinesequence(token) {
     const node = this.stack[this.stack.length - 1];
-    node.depth = this.sliceSerialize(token).charCodeAt(0) === 61 ? 1 : 2;
+    node.depth = this.sliceSerialize(token).codePointAt(0) === 61 ? 1 : 2;
   }
   function onexitsetextheading() {
-    setData('setextHeadingSlurpLineEnding');
+    this.data.setextHeadingSlurpLineEnding = undefined;
   }
   function onenterdata(token) {
     const node = this.stack[this.stack.length - 1];
-    let tail = node.children[node.children.length - 1];
+    const siblings = node.children;
+    let tail = siblings[siblings.length - 1];
     if (!tail || tail.type !== 'text') {
       tail = text();
       tail.position = {
-        start: point$1(token.start)
+        start: point$1(token.start),
+        end: undefined
       };
-      node.children.push(tail);
+      siblings.push(tail);
     }
     this.stack.push(tail);
   }
@@ -7574,22 +7258,19 @@ function compiler(options) {
   }
   function onexitlineending(token) {
     const context = this.stack[this.stack.length - 1];
-    if (getData('atHardBreak')) {
+    if (this.data.atHardBreak) {
       const tail = context.children[context.children.length - 1];
       tail.position.end = point$1(token.end);
-      setData('atHardBreak');
-      return
+      this.data.atHardBreak = undefined;
+      return;
     }
-    if (
-      !getData('setextHeadingSlurpLineEnding') &&
-      config.canContainEols.includes(context.type)
-    ) {
+    if (!this.data.setextHeadingSlurpLineEnding && config.canContainEols.includes(context.type)) {
       onenterdata.call(this, token);
       onexitdata.call(this, token);
     }
   }
   function onexithardbreak() {
-    setData('atHardBreak', true);
+    this.data.atHardBreak = true;
   }
   function onexithtmlflow() {
     const data = this.resume();
@@ -7608,8 +7289,8 @@ function compiler(options) {
   }
   function onexitlink() {
     const node = this.stack[this.stack.length - 1];
-    if (getData('inReference')) {
-      const referenceType = getData('referenceType') || 'shortcut';
+    if (this.data.inReference) {
+      const referenceType = this.data.referenceType || 'shortcut';
       node.type += 'Reference';
       node.referenceType = referenceType;
       delete node.url;
@@ -7618,12 +7299,12 @@ function compiler(options) {
       delete node.identifier;
       delete node.label;
     }
-    setData('referenceType');
+    this.data.referenceType = undefined;
   }
   function onexitimage() {
     const node = this.stack[this.stack.length - 1];
-    if (getData('inReference')) {
-      const referenceType = getData('referenceType') || 'shortcut';
+    if (this.data.inReference) {
+      const referenceType = this.data.referenceType || 'shortcut';
       node.type += 'Reference';
       node.referenceType = referenceType;
       delete node.url;
@@ -7632,7 +7313,7 @@ function compiler(options) {
       delete node.identifier;
       delete node.label;
     }
-    setData('referenceType');
+    this.data.referenceType = undefined;
   }
   function onexitlabeltext(token) {
     const string = this.sliceSerialize(token);
@@ -7644,7 +7325,7 @@ function compiler(options) {
     const fragment = this.stack[this.stack.length - 1];
     const value = this.resume();
     const node = this.stack[this.stack.length - 1];
-    setData('inReference', true);
+    this.data.inReference = true;
     if (node.type === 'link') {
       const children = fragment.children;
       node.children = children;
@@ -7663,39 +7344,37 @@ function compiler(options) {
     node.title = data;
   }
   function onexitresource() {
-    setData('inReference');
+    this.data.inReference = undefined;
   }
   function onenterreference() {
-    setData('referenceType', 'collapsed');
+    this.data.referenceType = 'collapsed';
   }
   function onexitreferencestring(token) {
     const label = this.resume();
     const node = this.stack[this.stack.length - 1];
     node.label = label;
-    node.identifier = normalizeIdentifier(
-      this.sliceSerialize(token)
-    ).toLowerCase();
-    setData('referenceType', 'full');
+    node.identifier = normalizeIdentifier(this.sliceSerialize(token)).toLowerCase();
+    this.data.referenceType = 'full';
   }
   function onexitcharacterreferencemarker(token) {
-    setData('characterReferenceType', token.type);
+    this.data.characterReferenceType = token.type;
   }
   function onexitcharacterreferencevalue(token) {
     const data = this.sliceSerialize(token);
-    const type = getData('characterReferenceType');
+    const type = this.data.characterReferenceType;
     let value;
     if (type) {
-      value = decodeNumericCharacterReference(
-        data,
-        type === 'characterReferenceMarkerNumeric' ? 10 : 16
-      );
-      setData('characterReferenceType');
+      value = decodeNumericCharacterReference(data, type === "characterReferenceMarkerNumeric" ? 10 : 16);
+      this.data.characterReferenceType = undefined;
     } else {
       const result = decodeNamedCharacterReference(data);
       value = result;
     }
-    const tail = this.stack.pop();
+    const tail = this.stack[this.stack.length - 1];
     tail.value += value;
+  }
+  function onexitcharacterreference(token) {
+    const tail = this.stack.pop();
     tail.position.end = point$1(token.end);
   }
   function onexitautolinkprotocol(token) {
@@ -7712,7 +7391,7 @@ function compiler(options) {
     return {
       type: 'blockquote',
       children: []
-    }
+    };
   }
   function codeFlow() {
     return {
@@ -7720,13 +7399,13 @@ function compiler(options) {
       lang: null,
       meta: null,
       value: ''
-    }
+    };
   }
   function codeText() {
     return {
       type: 'inlineCode',
       value: ''
-    }
+    };
   }
   function definition() {
     return {
@@ -7735,31 +7414,31 @@ function compiler(options) {
       label: null,
       title: null,
       url: ''
-    }
+    };
   }
   function emphasis() {
     return {
       type: 'emphasis',
       children: []
-    }
+    };
   }
   function heading() {
     return {
       type: 'heading',
-      depth: undefined,
+      depth: 0,
       children: []
-    }
+    };
   }
   function hardBreak() {
     return {
       type: 'break'
-    }
+    };
   }
   function html() {
     return {
       type: 'html',
       value: ''
-    }
+    };
   }
   function image() {
     return {
@@ -7767,7 +7446,7 @@ function compiler(options) {
       title: null,
       url: '',
       alt: null
-    }
+    };
   }
   function link() {
     return {
@@ -7775,7 +7454,7 @@ function compiler(options) {
       title: null,
       url: '',
       children: []
-    }
+    };
   }
   function list(token) {
     return {
@@ -7784,7 +7463,7 @@ function compiler(options) {
       start: null,
       spread: token._spread,
       children: []
-    }
+    };
   }
   function listItem(token) {
     return {
@@ -7792,30 +7471,30 @@ function compiler(options) {
       spread: token._spread,
       checked: null,
       children: []
-    }
+    };
   }
   function paragraph() {
     return {
       type: 'paragraph',
       children: []
-    }
+    };
   }
   function strong() {
     return {
       type: 'strong',
       children: []
-    }
+    };
   }
   function text() {
     return {
       type: 'text',
       value: ''
-    }
+    };
   }
   function thematicBreak() {
     return {
       type: 'thematicBreak'
-    }
+    };
   }
 }
 function point$1(d) {
@@ -7823,7 +7502,7 @@ function point$1(d) {
     line: d.line,
     column: d.column,
     offset: d.offset
-  }
+  };
 }
 function configure$1(combined, extensions) {
   let index = -1;
@@ -7839,82 +7518,76 @@ function configure$1(combined, extensions) {
 function extension(combined, extension) {
   let key;
   for (key in extension) {
-    if (own$5.call(extension, key)) {
-      if (key === 'canContainEols') {
-        const right = extension[key];
-        if (right) {
-          combined[key].push(...right);
-        }
-      } else if (key === 'transforms') {
-        const right = extension[key];
-        if (right) {
-          combined[key].push(...right);
-        }
-      } else if (key === 'enter' || key === 'exit') {
-        const right = extension[key];
-        if (right) {
-          Object.assign(combined[key], right);
-        }
+    if (own$3.call(extension, key)) {
+      switch (key) {
+        case 'canContainEols':
+          {
+            const right = extension[key];
+            if (right) {
+              combined[key].push(...right);
+            }
+            break;
+          }
+        case 'transforms':
+          {
+            const right = extension[key];
+            if (right) {
+              combined[key].push(...right);
+            }
+            break;
+          }
+        case 'enter':
+        case 'exit':
+          {
+            const right = extension[key];
+            if (right) {
+              Object.assign(combined[key], right);
+            }
+            break;
+          }
       }
     }
   }
 }
 function defaultOnError(left, right) {
   if (left) {
-    throw new Error(
-      'Cannot close `' +
-        left.type +
-        '` (' +
-        stringifyPosition({
-          start: left.start,
-          end: left.end
-        }) +
-        '): a different token (`' +
-        right.type +
-        '`, ' +
-        stringifyPosition({
-          start: right.start,
-          end: right.end
-        }) +
-        ') is open'
-    )
+    throw new Error('Cannot close `' + left.type + '` (' + stringifyPosition({
+      start: left.start,
+      end: left.end
+    }) + '): a different token (`' + right.type + '`, ' + stringifyPosition({
+      start: right.start,
+      end: right.end
+    }) + ') is open');
   } else {
-    throw new Error(
-      'Cannot close document, a token (`' +
-        right.type +
-        '`, ' +
-        stringifyPosition({
-          start: right.start,
-          end: right.end
-        }) +
-        ') is still open'
-    )
+    throw new Error('Cannot close document, a token (`' + right.type + '`, ' + stringifyPosition({
+      start: right.start,
+      end: right.end
+    }) + ') is still open');
   }
 }
 
 function remarkParse(options) {
-  const parser = (doc) => {
-    const settings =  (this.data('settings'));
-    return fromMarkdown(
-      doc,
-      Object.assign({}, settings, options, {
-        extensions: this.data('micromarkExtensions') || [],
-        mdastExtensions: this.data('fromMarkdownExtensions') || []
-      })
-    )
-  };
-  Object.assign(this, {Parser: parser});
+  const self = this;
+  self.parser = parser;
+  function parser(doc) {
+    return fromMarkdown(doc, {
+      ...self.data('settings'),
+      ...options,
+      extensions: self.data('micromarkExtensions') || [],
+      mdastExtensions: self.data('fromMarkdownExtensions') || []
+    })
+  }
 }
 
-const own$4 = {}.hasOwnProperty;
+const own$2 = {}.hasOwnProperty;
 function zwitch(key, options) {
   const settings = options || {};
   function one(value, ...parameters) {
     let fn = one.invalid;
     const handlers = one.handlers;
-    if (value && own$4.call(value, key)) {
+    if (value && own$2.call(value, key)) {
       const id = String(value[key]);
-      fn = own$4.call(handlers, id) ? handlers[id] : one.unknown;
+      fn = own$2.call(handlers, id) ? handlers[id] : one.unknown;
     }
     if (fn) {
       return fn.call(this, value, ...parameters)
@@ -7926,6 +7599,7 @@ function zwitch(key, options) {
   return one
 }
 
+const own$1 = {}.hasOwnProperty;
 function configure(base, extension) {
   let index = -1;
   let key;
@@ -7935,15 +7609,40 @@ function configure(base, extension) {
     }
   }
   for (key in extension) {
-    if (key === 'extensions') ; else if (key === 'unsafe' || key === 'join') {
-      base[key] = [...(base[key] || []), ...(extension[key] || [])];
-    } else if (key === 'handlers') {
-      base[key] = Object.assign(base[key], extension[key] || {});
-    } else {
-      base.options[key] = extension[key];
+    if (own$1.call(extension, key)) {
+      switch (key) {
+        case 'extensions': {
+          break
+        }
+        case 'unsafe': {
+          list$1(base[key], extension[key]);
+          break
+        }
+        case 'join': {
+          list$1(base[key], extension[key]);
+          break
+        }
+        case 'handlers': {
+          map$4(base[key], extension[key]);
+          break
+        }
+        default: {
+          base.options[key] = extension[key];
+        }
+      }
     }
   }
   return base
+}
+function list$1(left, right) {
+  if (right) {
+    left.push(...right);
+  }
+}
+function map$4(left, right) {
+  if (right) {
+    Object.assign(left, right);
+  }
 }
 
 function blockquote(node, _, state, info) {
@@ -8022,7 +7721,7 @@ function longestStreak(value, substring) {
 
 function formatCodeAsIndented(node, state) {
   return Boolean(
-    !state.options.fences &&
+    state.options.fences === false &&
       node.value &&
       !node.lang &&
       /[^ \r\n]/.test(node.value) &&
@@ -8195,17 +7894,17 @@ function emphasisPeek(_, _1, state) {
 const convert =
   (
     function (test) {
-      if (test === undefined || test === null) {
+      if (test === null || test === undefined) {
         return ok
       }
-      if (typeof test === 'string') {
-        return typeFactory(test)
+      if (typeof test === 'function') {
+        return castFactory(test)
       }
       if (typeof test === 'object') {
         return Array.isArray(test) ? anyFactory(test) : propsFactory(test)
       }
-      if (typeof test === 'function') {
-        return castFactory(test)
+      if (typeof test === 'string') {
+        return typeFactory(test)
       }
       throw new Error('Expected function, string, or object as test')
     }
@@ -8220,17 +7919,21 @@ function anyFactory(tests) {
   function any(...parameters) {
     let index = -1;
     while (++index < checks.length) {
-      if (checks[index].call(this, ...parameters)) return true
+      if (checks[index].apply(this, parameters)) return true
     }
     return false
   }
 }
 function propsFactory(check) {
+  const checkAsRecord =  (check);
   return castFactory(all)
   function all(node) {
+    const nodeAsRecord =  (
+       (node)
+    );
     let key;
     for (key in check) {
-      if (node[key] !== check[key]) return false
+      if (nodeAsRecord[key] !== checkAsRecord[key]) return false
     }
     return true
   }
@@ -8241,122 +7944,138 @@ function typeFactory(check) {
     return node && node.type === check
   }
 }
-function castFactory(check) {
-  return assertion
-  function assertion(node, ...parameters) {
+function castFactory(testFunction) {
+  return check
+  function check(value, index, parent) {
     return Boolean(
-      node &&
-        typeof node === 'object' &&
-        'type' in node &&
-        Boolean(check.call(this, node, ...parameters))
+      looksLikeANode(value) &&
+        testFunction.call(
+          this,
+          value,
+          typeof index === 'number' ? index : undefined,
+          parent || undefined
+        )
     )
   }
 }
 function ok() {
   return true
 }
+function looksLikeANode(value) {
+  return value !== null && typeof value === 'object' && 'type' in value
+}
 
-function color$2(d) {
+function color$1(d) {
   return '\u001B[33m' + d + '\u001B[39m'
 }
 
-const CONTINUE$1 = true;
-const EXIT$1 = false;
-const SKIP$1 = 'skip';
-const visitParents$1 =
-  (
-    function (tree, test, visitor, reverse) {
-      if (typeof test === 'function' && typeof visitor !== 'function') {
-        reverse = visitor;
-        visitor = test;
-        test = null;
-      }
-      const is = convert(test);
-      const step = reverse ? -1 : 1;
-      factory(tree, undefined, [])();
-      function factory(node, index, parents) {
-        const value = node && typeof node === 'object' ? node : {};
-        if (typeof value.type === 'string') {
-          const name =
-            typeof value.tagName === 'string'
-              ? value.tagName
-              :
-              typeof value.name === 'string'
-              ? value.name
-              : undefined;
-          Object.defineProperty(visit, 'name', {
-            value:
-              'node (' + color$2(node.type + (name ? '<' + name + '>' : '')) + ')'
-          });
-        }
-        return visit
-        function visit() {
-          let result = [];
-          let subresult;
-          let offset;
-          let grandparents;
-          if (!test || is(node, index, parents[parents.length - 1] || null)) {
-            result = toResult$1(visitor(node, parents));
-            if (result[0] === EXIT$1) {
-              return result
-            }
-          }
-          if (node.children && result[0] !== SKIP$1) {
-            offset = (reverse ? node.children.length : -1) + step;
-            grandparents = parents.concat(node);
-            while (offset > -1 && offset < node.children.length) {
-              subresult = factory(node.children[offset], offset, grandparents)();
-              if (subresult[0] === EXIT$1) {
-                return subresult
-              }
-              offset =
-                typeof subresult[1] === 'number' ? subresult[1] : offset + step;
-            }
-          }
+const empty$1 = [];
+const CONTINUE = true;
+const EXIT = false;
+const SKIP = 'skip';
+function visitParents(tree, test, visitor, reverse) {
+  let check;
+  if (typeof test === 'function' && typeof visitor !== 'function') {
+    reverse = visitor;
+    visitor = test;
+  } else {
+    check = test;
+  }
+  const is = convert(check);
+  const step = reverse ? -1 : 1;
+  factory(tree, undefined, [])();
+  function factory(node, index, parents) {
+    const value =  (
+      node && typeof node === 'object' ? node : {}
+    );
+    if (typeof value.type === 'string') {
+      const name =
+        typeof value.tagName === 'string'
+          ? value.tagName
+          :
+          typeof value.name === 'string'
+          ? value.name
+          : undefined;
+      Object.defineProperty(visit, 'name', {
+        value:
+          'node (' + color$1(node.type + (name ? '<' + name + '>' : '')) + ')'
+      });
+    }
+    return visit
+    function visit() {
+      let result = empty$1;
+      let subresult;
+      let offset;
+      let grandparents;
+      if (!test || is(node, index, parents[parents.length - 1] || undefined)) {
+        result = toResult(visitor(node, parents));
+        if (result[0] === EXIT) {
           return result
         }
       }
+      if ('children' in node && node.children) {
+        const nodeAsParent =  (node);
+        if (nodeAsParent.children && result[0] !== SKIP) {
+          offset = (reverse ? nodeAsParent.children.length : -1) + step;
+          grandparents = parents.concat(nodeAsParent);
+          while (offset > -1 && offset < nodeAsParent.children.length) {
+            const child = nodeAsParent.children[offset];
+            subresult = factory(child, offset, grandparents)();
+            if (subresult[0] === EXIT) {
+              return subresult
+            }
+            offset =
+              typeof subresult[1] === 'number' ? subresult[1] : offset + step;
+          }
+        }
+      }
+      return result
     }
-  );
-function toResult$1(value) {
+  }
+}
+function toResult(value) {
   if (Array.isArray(value)) {
     return value
   }
   if (typeof value === 'number') {
-    return [CONTINUE$1, value]
+    return [CONTINUE, value]
   }
-  return [value]
+  return value === null || value === undefined ? empty$1 : [value]
 }
 
-const visit$1 =
-  (
-    function (tree, test, visitor, reverse) {
-      if (typeof test === 'function' && typeof visitor !== 'function') {
-        reverse = visitor;
-        visitor = test;
-        test = null;
-      }
-      visitParents$1(tree, test, overload, reverse);
-      function overload(node, parents) {
-        const parent = parents[parents.length - 1];
-        return visitor(
-          node,
-          parent ? parent.children.indexOf(node) : null,
-          parent
-        )
-      }
-    }
-  );
+function visit(tree, testOrVisitor, visitorOrReverse, maybeReverse) {
+  let reverse;
+  let test;
+  let visitor;
+  if (
+    typeof testOrVisitor === 'function' &&
+    typeof visitorOrReverse !== 'function'
+  ) {
+    test = undefined;
+    visitor = testOrVisitor;
+    reverse = visitorOrReverse;
+  } else {
+    test = testOrVisitor;
+    visitor = visitorOrReverse;
+    reverse = maybeReverse;
+  }
+  visitParents(tree, test, overload, reverse);
+  function overload(node, parents) {
+    const parent = parents[parents.length - 1];
+    const index = parent ? parent.children.indexOf(node) : undefined;
+    return visitor(node, index, parent)
+  }
+}
 
 function formatHeadingAsSetext(node, state) {
   let literalWithBreak = false;
-  visit$1(node, (node) => {
+  visit(node, function (node) {
     if (
       ('value' in node && /\r?\n|\r/.test(node.value)) ||
       node.type === 'break'
     ) {
       literalWithBreak = true;
-      return EXIT$1
+      return EXIT
     }
   });
   return Boolean(
@@ -8413,8 +8132,8 @@ function heading(node, _, state, info) {
   return value
 }
 
-html.peek = htmlPeek;
-function html(node) {
+html$1.peek = htmlPeek;
+function html$1(node) {
   return node.value || ''
 }
 function htmlPeek() {
@@ -8514,22 +8233,6 @@ function imageReferencePeek() {
   return '!'
 }
 
-function patternCompile(pattern) {
-  if (!pattern._compiled) {
-    const before =
-      (pattern.atBreak ? '[\\r\\n][\\t ]*' : '') +
-      (pattern.before ? '(?:' + pattern.before + ')' : '');
-    pattern._compiled = new RegExp(
-      (before ? '(' + before + ')' : '') +
-        (/[|\\{}()[\]^$+*?.-]/.test(pattern.character) ? '\\' : '') +
-        pattern.character +
-        (pattern.after ? '(?:' + pattern.after + ')' : ''),
-      'g'
-    );
-  }
-  return pattern._compiled
-}
-
 inlineCode.peek = inlineCodePeek;
 function inlineCode(node, _, state) {
   let value = node.value || '';
@@ -8546,7 +8249,7 @@ function inlineCode(node, _, state) {
   }
   while (++index < state.unsafe.length) {
     const pattern = state.unsafe[index];
-    const expression = patternCompile(pattern);
+    const expression = state.compilePattern(pattern);
     let match;
     if (!pattern.atBreak) continue
     while ((match = expression.exec(value))) {
@@ -8746,31 +8449,6 @@ function checkBulletOrdered(state) {
   return marker
 }
 
-function checkBulletOrderedOther(state) {
-  const bulletOrdered = checkBulletOrdered(state);
-  const bulletOrderedOther = state.options.bulletOrderedOther;
-  if (!bulletOrderedOther) {
-    return bulletOrdered === '.' ? ')' : '.'
-  }
-  if (bulletOrderedOther !== '.' && bulletOrderedOther !== ')') {
-    throw new Error(
-      'Cannot serialize items with `' +
-        bulletOrderedOther +
-        '` for `options.bulletOrderedOther`, expected `*`, `+`, or `-`'
-    )
-  }
-  if (bulletOrderedOther === bulletOrdered) {
-    throw new Error(
-      'Expected `bulletOrdered` (`' +
-        bulletOrdered +
-        '`) and `bulletOrderedOther` (`' +
-        bulletOrderedOther +
-        '`) to be different'
-    )
-  }
-  return bulletOrderedOther
-}
-
 function checkRule(state) {
   const marker = state.options.rule || '*';
   if (marker !== '*' && marker !== '-' && marker !== '_') {
@@ -8788,20 +8466,12 @@ function list(node, parent, state, info) {
   const bulletCurrent = state.bulletCurrent;
   let bullet = node.ordered ? checkBulletOrdered(state) : checkBullet(state);
   const bulletOther = node.ordered
-    ? checkBulletOrderedOther(state)
+    ? bullet === '.'
+      ? ')'
+      : '.'
     : checkBulletOther(state);
-  const bulletLastUsed = state.bulletLastUsed;
-  let useDifferentMarker = false;
-  if (
-    parent &&
-    (node.ordered
-      ? state.options.bulletOrderedOther
-      : state.options.bulletOther) &&
-    bulletLastUsed &&
-    bullet === bulletLastUsed
-  ) {
-    useDifferentMarker = true;
-  }
+  let useDifferentMarker =
+    parent && state.bulletLastUsed ? bullet === state.bulletLastUsed : false;
   if (!node.ordered) {
     const firstListItem = node.children ? node.children[0] : undefined;
     if (
@@ -8847,10 +8517,7 @@ function list(node, parent, state, info) {
 }
 
 function checkListItemIndent(state) {
-  const style = state.options.listItemIndent || 'tab';
-  if (style === 1 || style === '1') {
-    return 'one'
-  }
+  const style = state.options.listItemIndent || 'one';
   if (style !== 'tab' && style !== 'one' && style !== 'mixed') {
     throw new Error(
       'Cannot serialize items with `' +
@@ -8909,25 +8576,32 @@ function paragraph(node, _, state, info) {
   return value
 }
 
-const phrasing =  (
-  convert([
-    'break',
-    'delete',
-    'emphasis',
-    'footnote',
-    'footnoteReference',
-    'image',
-    'imageReference',
-    'inlineCode',
-    'link',
-    'linkReference',
-    'strong',
-    'text'
-  ])
-);
+const phrasing =
+  (
+    convert([
+      'break',
+      'delete',
+      'emphasis',
+      'footnote',
+      'footnoteReference',
+      'image',
+      'imageReference',
+      'inlineCode',
+      'inlineMath',
+      'link',
+      'linkReference',
+      'mdxJsxTextElement',
+      'mdxTextExpression',
+      'strong',
+      'text',
+      'textDirective'
+    ])
+  );
 
 function root(node, _, state, info) {
-  const hasPhrasing = node.children.some((d) => phrasing(d));
+  const hasPhrasing = node.children.some(function (d) {
+    return phrasing(d)
+  });
   const fn = hasPhrasing ? state.containerPhrasing : state.containerFlow;
   return fn.call(state, node, info)
 }
@@ -8996,7 +8670,7 @@ const handle = {
   emphasis,
   hardBreak,
   heading,
-  html,
+  html: html$1,
   image,
   imageReference,
   inlineCode,
@@ -9018,16 +8692,6 @@ function joinDefaults(left, right, parent, state) {
     formatCodeAsIndented(right, state) &&
     (left.type === 'list' ||
       (left.type === right.type && formatCodeAsIndented(left, state)))
-  ) {
-    return false
-  }
-  if (
-    left.type === 'list' &&
-    left.type === right.type &&
-    Boolean(left.ordered) === Boolean(right.ordered) &&
-    !(left.ordered
-      ? state.options.bulletOrderedOther
-      : state.options.bulletOther)
   ) {
     return false
   }
@@ -9146,6 +8810,22 @@ function association(node) {
   return decodeString(node.identifier)
 }
 
+function compilePattern(pattern) {
+  if (!pattern._compiled) {
+    const before =
+      (pattern.atBreak ? '[\\r\\n][\\t ]*' : '') +
+      (pattern.before ? '(?:' + pattern.before + ')' : '');
+    pattern._compiled = new RegExp(
+      (before ? '(' + before + ')' : '') +
+        (/[|\\{}()[\]^$+*?.-]/.test(pattern.character) ? '\\' : '') +
+        pattern.character +
+        (pattern.after ? '(?:' + pattern.after + ')' : ''),
+      'g'
+    );
+  }
+  return pattern._compiled
+}
+
 function containerPhrasing(parent, state, info) {
   const indexStack = state.indexStack;
   const children = parent.children || [];
@@ -9247,13 +8927,13 @@ function between(left, right, parent, state) {
   return '\n\n'
 }
 
-const eol = /\r?\n|\r/g;
+const eol$1 = /\r?\n|\r/g;
 function indentLines(value, map) {
   const result = [];
   let start = 0;
   let line = 0;
   let match;
-  while ((match = eol.exec(value))) {
+  while ((match = eol$1.exec(value))) {
     one(value.slice(start, match.index));
     result.push(match[0]);
     start = match.index + match[0].length;
@@ -9277,7 +8957,7 @@ function safe(state, input, config) {
     if (!patternInScope(state.stack, pattern)) {
       continue
     }
-    const expression = patternCompile(pattern);
+    const expression = state.compilePattern(pattern);
     let match;
     while ((match = expression.exec(value))) {
       const before = 'before' in pattern || Boolean(pattern.atBreak);
@@ -9394,19 +9074,19 @@ function toMarkdown(tree, options = {}) {
     containerPhrasing: containerPhrasingBound,
     containerFlow: containerFlowBound,
     createTracker: track,
+    compilePattern,
     safe: safeBound,
     stack: [],
-    unsafe: [],
-    join: [],
-    handlers: {},
+    unsafe: [...unsafe],
+    join: [...join],
+    handlers: {...handle},
     options: {},
     indexStack: [],
     handle: undefined
   };
-  configure(state, {unsafe, join, handlers: handle});
   configure(state, options);
   if (state.options.tightDefinitions) {
-    configure(state, {join: [joinDefinition]});
+    state.join.push(joinDefinition);
   }
   state.handle = zwitch('type', {
     invalid,
@@ -9438,7 +9118,8 @@ function toMarkdown(tree, options = {}) {
 function invalid(value) {
   throw new Error('Cannot handle value `' + value + '`, expected node')
 }
-function unknown(node) {
+function unknown(value) {
+  const node =  (value);
   throw new Error('Cannot handle unknown node `' + node.type + '`')
 }
 function joinDefinition(left, right) {
@@ -9457,1447 +9138,15 @@ function safeBound(value, config) {
 }
 
 function remarkStringify(options) {
-  const compiler = (tree) => {
-    const settings =  (this.data('settings'));
-    return toMarkdown(
-      tree,
-      Object.assign({}, settings, options, {
-        extensions:
-           (
-            this.data('toMarkdownExtensions')
-          ) || []
-      })
-    )
-  };
-  Object.assign(this, {Compiler: compiler});
-}
-
-const wwwPrefix = {
-  tokenize: tokenizeWwwPrefix,
-  partial: true
-};
-const domain = {
-  tokenize: tokenizeDomain,
-  partial: true
-};
-const path = {
-  tokenize: tokenizePath,
-  partial: true
-};
-const trail = {
-  tokenize: tokenizeTrail,
-  partial: true
-};
-const emailDomainDotTrail = {
-  tokenize: tokenizeEmailDomainDotTrail,
-  partial: true
-};
-const wwwAutolink = {
-  tokenize: tokenizeWwwAutolink,
-  previous: previousWww
-};
-const protocolAutolink = {
-  tokenize: tokenizeProtocolAutolink,
-  previous: previousProtocol
-};
-const emailAutolink = {
-  tokenize: tokenizeEmailAutolink,
-  previous: previousEmail
-};
-const text = {};
-const gfmAutolinkLiteral = {
-  text
-};
-let code = 48;
-while (code < 123) {
-  text[code] = emailAutolink;
-  code++;
-  if (code === 58) code = 65;
-  else if (code === 91) code = 97;
-}
-text[43] = emailAutolink;
-text[45] = emailAutolink;
-text[46] = emailAutolink;
-text[95] = emailAutolink;
-text[72] = [emailAutolink, protocolAutolink];
-text[104] = [emailAutolink, protocolAutolink];
-text[87] = [emailAutolink, wwwAutolink];
-text[119] = [emailAutolink, wwwAutolink];
-function tokenizeEmailAutolink(effects, ok, nok) {
   const self = this;
-  let dot;
-  let data;
-  return start
-  function start(code) {
-    if (
-      !gfmAtext(code) ||
-      !previousEmail.call(self, self.previous) ||
-      previousUnbalanced(self.events)
-    ) {
-      return nok(code)
-    }
-    effects.enter('literalAutolink');
-    effects.enter('literalAutolinkEmail');
-    return atext(code)
+  self.compiler = compiler;
+  function compiler(tree) {
+    return toMarkdown(tree, {
+      ...self.data('settings'),
+      ...options,
+      extensions: self.data('toMarkdownExtensions') || []
+    })
   }
-  function atext(code) {
-    if (gfmAtext(code)) {
-      effects.consume(code);
-      return atext
-    }
-    if (code === 64) {
-      effects.consume(code);
-      return emailDomain
-    }
-    return nok(code)
-  }
-  function emailDomain(code) {
-    if (code === 46) {
-      return effects.check(
-        emailDomainDotTrail,
-        emailDomainAfter,
-        emailDomainDot
-      )(code)
-    }
-    if (code === 45 || code === 95 || asciiAlphanumeric(code)) {
-      data = true;
-      effects.consume(code);
-      return emailDomain
-    }
-    return emailDomainAfter(code)
-  }
-  function emailDomainDot(code) {
-    effects.consume(code);
-    dot = true;
-    return emailDomain
-  }
-  function emailDomainAfter(code) {
-    if (data && dot && asciiAlpha(self.previous)) {
-      effects.exit('literalAutolinkEmail');
-      effects.exit('literalAutolink');
-      return ok(code)
-    }
-    return nok(code)
-  }
-}
-function tokenizeWwwAutolink(effects, ok, nok) {
-  const self = this;
-  return wwwStart
-  function wwwStart(code) {
-    if (
-      (code !== 87 && code !== 119) ||
-      !previousWww.call(self, self.previous) ||
-      previousUnbalanced(self.events)
-    ) {
-      return nok(code)
-    }
-    effects.enter('literalAutolink');
-    effects.enter('literalAutolinkWww');
-    return effects.check(
-      wwwPrefix,
-      effects.attempt(domain, effects.attempt(path, wwwAfter), nok),
-      nok
-    )(code)
-  }
-  function wwwAfter(code) {
-    effects.exit('literalAutolinkWww');
-    effects.exit('literalAutolink');
-    return ok(code)
-  }
-}
-function tokenizeProtocolAutolink(effects, ok, nok) {
-  const self = this;
-  let buffer = '';
-  let seen = false;
-  return protocolStart
-  function protocolStart(code) {
-    if (
-      (code === 72 || code === 104) &&
-      previousProtocol.call(self, self.previous) &&
-      !previousUnbalanced(self.events)
-    ) {
-      effects.enter('literalAutolink');
-      effects.enter('literalAutolinkHttp');
-      buffer += String.fromCodePoint(code);
-      effects.consume(code);
-      return protocolPrefixInside
-    }
-    return nok(code)
-  }
-  function protocolPrefixInside(code) {
-    if (asciiAlpha(code) && buffer.length < 5) {
-      buffer += String.fromCodePoint(code);
-      effects.consume(code);
-      return protocolPrefixInside
-    }
-    if (code === 58) {
-      const protocol = buffer.toLowerCase();
-      if (protocol === 'http' || protocol === 'https') {
-        effects.consume(code);
-        return protocolSlashesInside
-      }
-    }
-    return nok(code)
-  }
-  function protocolSlashesInside(code) {
-    if (code === 47) {
-      effects.consume(code);
-      if (seen) {
-        return afterProtocol
-      }
-      seen = true;
-      return protocolSlashesInside
-    }
-    return nok(code)
-  }
-  function afterProtocol(code) {
-    return code === null ||
-      asciiControl(code) ||
-      markdownLineEndingOrSpace(code) ||
-      unicodeWhitespace(code) ||
-      unicodePunctuation(code)
-      ? nok(code)
-      : effects.attempt(domain, effects.attempt(path, protocolAfter), nok)(code)
-  }
-  function protocolAfter(code) {
-    effects.exit('literalAutolinkHttp');
-    effects.exit('literalAutolink');
-    return ok(code)
-  }
-}
-function tokenizeWwwPrefix(effects, ok, nok) {
-  let size = 0;
-  return wwwPrefixInside
-  function wwwPrefixInside(code) {
-    if ((code === 87 || code === 119) && size < 3) {
-      size++;
-      effects.consume(code);
-      return wwwPrefixInside
-    }
-    if (code === 46 && size === 3) {
-      effects.consume(code);
-      return wwwPrefixAfter
-    }
-    return nok(code)
-  }
-  function wwwPrefixAfter(code) {
-    return code === null ? nok(code) : ok(code)
-  }
-}
-function tokenizeDomain(effects, ok, nok) {
-  let underscoreInLastSegment;
-  let underscoreInLastLastSegment;
-  let seen;
-  return domainInside
-  function domainInside(code) {
-    if (code === 46 || code === 95) {
-      return effects.check(trail, domainAfter, domainAtPunctuation)(code)
-    }
-    if (
-      code === null ||
-      markdownLineEndingOrSpace(code) ||
-      unicodeWhitespace(code) ||
-      (code !== 45 && unicodePunctuation(code))
-    ) {
-      return domainAfter(code)
-    }
-    seen = true;
-    effects.consume(code);
-    return domainInside
-  }
-  function domainAtPunctuation(code) {
-    if (code === 95) {
-      underscoreInLastSegment = true;
-    }
-    else {
-      underscoreInLastLastSegment = underscoreInLastSegment;
-      underscoreInLastSegment = undefined;
-    }
-    effects.consume(code);
-    return domainInside
-  }
-  function domainAfter(code) {
-    if (underscoreInLastLastSegment || underscoreInLastSegment || !seen) {
-      return nok(code)
-    }
-    return ok(code)
-  }
-}
-function tokenizePath(effects, ok) {
-  let sizeOpen = 0;
-  let sizeClose = 0;
-  return pathInside
-  function pathInside(code) {
-    if (code === 40) {
-      sizeOpen++;
-      effects.consume(code);
-      return pathInside
-    }
-    if (code === 41 && sizeClose < sizeOpen) {
-      return pathAtPunctuation(code)
-    }
-    if (
-      code === 33 ||
-      code === 34 ||
-      code === 38 ||
-      code === 39 ||
-      code === 41 ||
-      code === 42 ||
-      code === 44 ||
-      code === 46 ||
-      code === 58 ||
-      code === 59 ||
-      code === 60 ||
-      code === 63 ||
-      code === 93 ||
-      code === 95 ||
-      code === 126
-    ) {
-      return effects.check(trail, ok, pathAtPunctuation)(code)
-    }
-    if (
-      code === null ||
-      markdownLineEndingOrSpace(code) ||
-      unicodeWhitespace(code)
-    ) {
-      return ok(code)
-    }
-    effects.consume(code);
-    return pathInside
-  }
-  function pathAtPunctuation(code) {
-    if (code === 41) {
-      sizeClose++;
-    }
-    effects.consume(code);
-    return pathInside
-  }
-}
-function tokenizeTrail(effects, ok, nok) {
-  return trail
-  function trail(code) {
-    if (
-      code === 33 ||
-      code === 34 ||
-      code === 39 ||
-      code === 41 ||
-      code === 42 ||
-      code === 44 ||
-      code === 46 ||
-      code === 58 ||
-      code === 59 ||
-      code === 63 ||
-      code === 95 ||
-      code === 126
-    ) {
-      effects.consume(code);
-      return trail
-    }
-    if (code === 38) {
-      effects.consume(code);
-      return trailCharRefStart
-    }
-    if (code === 93) {
-      effects.consume(code);
-      return trailBracketAfter
-    }
-    if (
-      code === 60 ||
-      code === null ||
-      markdownLineEndingOrSpace(code) ||
-      unicodeWhitespace(code)
-    ) {
-      return ok(code)
-    }
-    return nok(code)
-  }
-  function trailBracketAfter(code) {
-    if (
-      code === null ||
-      code === 40 ||
-      code === 91 ||
-      markdownLineEndingOrSpace(code) ||
-      unicodeWhitespace(code)
-    ) {
-      return ok(code)
-    }
-    return trail(code)
-  }
-  function trailCharRefStart(code) {
-    return asciiAlpha(code) ? trailCharRefInside(code) : nok(code)
-  }
-  function trailCharRefInside(code) {
-    if (code === 59) {
-      effects.consume(code);
-      return trail
-    }
-    if (asciiAlpha(code)) {
-      effects.consume(code);
-      return trailCharRefInside
-    }
-    return nok(code)
-  }
-}
-function tokenizeEmailDomainDotTrail(effects, ok, nok) {
-  return start
-  function start(code) {
-    effects.consume(code);
-    return after
-  }
-  function after(code) {
-    return asciiAlphanumeric(code) ? nok(code) : ok(code)
-  }
-}
-function previousWww(code) {
-  return (
-    code === null ||
-    code === 40 ||
-    code === 42 ||
-    code === 95 ||
-    code === 91 ||
-    code === 93 ||
-    code === 126 ||
-    markdownLineEndingOrSpace(code)
-  )
-}
-function previousProtocol(code) {
-  return !asciiAlpha(code)
-}
-function previousEmail(code) {
-  return !(code === 47 || gfmAtext(code))
-}
-function gfmAtext(code) {
-  return (
-    code === 43 ||
-    code === 45 ||
-    code === 46 ||
-    code === 95 ||
-    asciiAlphanumeric(code)
-  )
-}
-function previousUnbalanced(events) {
-  let index = events.length;
-  let result = false;
-  while (index--) {
-    const token = events[index][1];
-    if (
-      (token.type === 'labelLink' || token.type === 'labelImage') &&
-      !token._balanced
-    ) {
-      result = true;
-      break
-    }
-    if (token._gfmAutolinkLiteralWalkedInto) {
-      result = false;
-      break
-    }
-  }
-  if (events.length > 0 && !result) {
-    events[events.length - 1][1]._gfmAutolinkLiteralWalkedInto = true;
-  }
-  return result
-}
-
-const indent = {
-  tokenize: tokenizeIndent,
-  partial: true
-};
-function gfmFootnote() {
-  return {
-    document: {
-      [91]: {
-        tokenize: tokenizeDefinitionStart,
-        continuation: {
-          tokenize: tokenizeDefinitionContinuation
-        },
-        exit: gfmFootnoteDefinitionEnd
-      }
-    },
-    text: {
-      [91]: {
-        tokenize: tokenizeGfmFootnoteCall
-      },
-      [93]: {
-        add: 'after',
-        tokenize: tokenizePotentialGfmFootnoteCall,
-        resolveTo: resolveToPotentialGfmFootnoteCall
-      }
-    }
-  }
-}
-function tokenizePotentialGfmFootnoteCall(effects, ok, nok) {
-  const self = this;
-  let index = self.events.length;
-  const defined = self.parser.gfmFootnotes || (self.parser.gfmFootnotes = []);
-  let labelStart;
-  while (index--) {
-    const token = self.events[index][1];
-    if (token.type === 'labelImage') {
-      labelStart = token;
-      break
-    }
-    if (
-      token.type === 'gfmFootnoteCall' ||
-      token.type === 'labelLink' ||
-      token.type === 'label' ||
-      token.type === 'image' ||
-      token.type === 'link'
-    ) {
-      break
-    }
-  }
-  return start
-  function start(code) {
-    if (!labelStart || !labelStart._balanced) {
-      return nok(code)
-    }
-    const id = normalizeIdentifier(
-      self.sliceSerialize({
-        start: labelStart.end,
-        end: self.now()
-      })
-    );
-    if (id.codePointAt(0) !== 94 || !defined.includes(id.slice(1))) {
-      return nok(code)
-    }
-    effects.enter('gfmFootnoteCallLabelMarker');
-    effects.consume(code);
-    effects.exit('gfmFootnoteCallLabelMarker');
-    return ok(code)
-  }
-}
-function resolveToPotentialGfmFootnoteCall(events, context) {
-  let index = events.length;
-  while (index--) {
-    if (
-      events[index][1].type === 'labelImage' &&
-      events[index][0] === 'enter'
-    ) {
-      events[index][1];
-      break
-    }
-  }
-  events[index + 1][1].type = 'data';
-  events[index + 3][1].type = 'gfmFootnoteCallLabelMarker';
-  const call = {
-    type: 'gfmFootnoteCall',
-    start: Object.assign({}, events[index + 3][1].start),
-    end: Object.assign({}, events[events.length - 1][1].end)
-  };
-  const marker = {
-    type: 'gfmFootnoteCallMarker',
-    start: Object.assign({}, events[index + 3][1].end),
-    end: Object.assign({}, events[index + 3][1].end)
-  };
-  marker.end.column++;
-  marker.end.offset++;
-  marker.end._bufferIndex++;
-  const string = {
-    type: 'gfmFootnoteCallString',
-    start: Object.assign({}, marker.end),
-    end: Object.assign({}, events[events.length - 1][1].start)
-  };
-  const chunk = {
-    type: 'chunkString',
-    contentType: 'string',
-    start: Object.assign({}, string.start),
-    end: Object.assign({}, string.end)
-  };
-  const replacement = [
-    events[index + 1],
-    events[index + 2],
-    ['enter', call, context],
-    events[index + 3],
-    events[index + 4],
-    ['enter', marker, context],
-    ['exit', marker, context],
-    ['enter', string, context],
-    ['enter', chunk, context],
-    ['exit', chunk, context],
-    ['exit', string, context],
-    events[events.length - 2],
-    events[events.length - 1],
-    ['exit', call, context]
-  ];
-  events.splice(index, events.length - index + 1, ...replacement);
-  return events
-}
-function tokenizeGfmFootnoteCall(effects, ok, nok) {
-  const self = this;
-  const defined = self.parser.gfmFootnotes || (self.parser.gfmFootnotes = []);
-  let size = 0;
-  let data;
-  return start
-  function start(code) {
-    effects.enter('gfmFootnoteCall');
-    effects.enter('gfmFootnoteCallLabelMarker');
-    effects.consume(code);
-    effects.exit('gfmFootnoteCallLabelMarker');
-    return callStart
-  }
-  function callStart(code) {
-    if (code !== 94) return nok(code)
-    effects.enter('gfmFootnoteCallMarker');
-    effects.consume(code);
-    effects.exit('gfmFootnoteCallMarker');
-    effects.enter('gfmFootnoteCallString');
-    effects.enter('chunkString').contentType = 'string';
-    return callData
-  }
-  function callData(code) {
-    if (
-      size > 999 ||
-      (code === 93 && !data) ||
-      code === null ||
-      code === 91 ||
-      markdownLineEndingOrSpace(code)
-    ) {
-      return nok(code)
-    }
-    if (code === 93) {
-      effects.exit('chunkString');
-      const token = effects.exit('gfmFootnoteCallString');
-      if (!defined.includes(normalizeIdentifier(self.sliceSerialize(token)))) {
-        return nok(code)
-      }
-      effects.enter('gfmFootnoteCallLabelMarker');
-      effects.consume(code);
-      effects.exit('gfmFootnoteCallLabelMarker');
-      effects.exit('gfmFootnoteCall');
-      return ok
-    }
-    if (!markdownLineEndingOrSpace(code)) {
-      data = true;
-    }
-    size++;
-    effects.consume(code);
-    return code === 92 ? callEscape : callData
-  }
-  function callEscape(code) {
-    if (code === 91 || code === 92 || code === 93) {
-      effects.consume(code);
-      size++;
-      return callData
-    }
-    return callData(code)
-  }
-}
-function tokenizeDefinitionStart(effects, ok, nok) {
-  const self = this;
-  const defined = self.parser.gfmFootnotes || (self.parser.gfmFootnotes = []);
-  let identifier;
-  let size = 0;
-  let data;
-  return start
-  function start(code) {
-    effects.enter('gfmFootnoteDefinition')._container = true;
-    effects.enter('gfmFootnoteDefinitionLabel');
-    effects.enter('gfmFootnoteDefinitionLabelMarker');
-    effects.consume(code);
-    effects.exit('gfmFootnoteDefinitionLabelMarker');
-    return labelAtMarker
-  }
-  function labelAtMarker(code) {
-    if (code === 94) {
-      effects.enter('gfmFootnoteDefinitionMarker');
-      effects.consume(code);
-      effects.exit('gfmFootnoteDefinitionMarker');
-      effects.enter('gfmFootnoteDefinitionLabelString');
-      effects.enter('chunkString').contentType = 'string';
-      return labelInside
-    }
-    return nok(code)
-  }
-  function labelInside(code) {
-    if (
-      size > 999 ||
-      (code === 93 && !data) ||
-      code === null ||
-      code === 91 ||
-      markdownLineEndingOrSpace(code)
-    ) {
-      return nok(code)
-    }
-    if (code === 93) {
-      effects.exit('chunkString');
-      const token = effects.exit('gfmFootnoteDefinitionLabelString');
-      identifier = normalizeIdentifier(self.sliceSerialize(token));
-      effects.enter('gfmFootnoteDefinitionLabelMarker');
-      effects.consume(code);
-      effects.exit('gfmFootnoteDefinitionLabelMarker');
-      effects.exit('gfmFootnoteDefinitionLabel');
-      return labelAfter
-    }
-    if (!markdownLineEndingOrSpace(code)) {
-      data = true;
-    }
-    size++;
-    effects.consume(code);
-    return code === 92 ? labelEscape : labelInside
-  }
-  function labelEscape(code) {
-    if (code === 91 || code === 92 || code === 93) {
-      effects.consume(code);
-      size++;
-      return labelInside
-    }
-    return labelInside(code)
-  }
-  function labelAfter(code) {
-    if (code === 58) {
-      effects.enter('definitionMarker');
-      effects.consume(code);
-      effects.exit('definitionMarker');
-      if (!defined.includes(identifier)) {
-        defined.push(identifier);
-      }
-      return factorySpace(
-        effects,
-        whitespaceAfter,
-        'gfmFootnoteDefinitionWhitespace'
-      )
-    }
-    return nok(code)
-  }
-  function whitespaceAfter(code) {
-    return ok(code)
-  }
-}
-function tokenizeDefinitionContinuation(effects, ok, nok) {
-  return effects.check(blankLine, ok, effects.attempt(indent, ok, nok))
-}
-function gfmFootnoteDefinitionEnd(effects) {
-  effects.exit('gfmFootnoteDefinition');
-}
-function tokenizeIndent(effects, ok, nok) {
-  const self = this;
-  return factorySpace(
-    effects,
-    afterPrefix,
-    'gfmFootnoteDefinitionIndent',
-    4 + 1
-  )
-  function afterPrefix(code) {
-    const tail = self.events[self.events.length - 1];
-    return tail &&
-      tail[1].type === 'gfmFootnoteDefinitionIndent' &&
-      tail[2].sliceSerialize(tail[1], true).length === 4
-      ? ok(code)
-      : nok(code)
-  }
-}
-
-function gfmStrikethrough(options) {
-  const options_ = options || {};
-  let single = options_.singleTilde;
-  const tokenizer = {
-    tokenize: tokenizeStrikethrough,
-    resolveAll: resolveAllStrikethrough
-  };
-  if (single === null || single === undefined) {
-    single = true;
-  }
-  return {
-    text: {
-      [126]: tokenizer
-    },
-    insideSpan: {
-      null: [tokenizer]
-    },
-    attentionMarkers: {
-      null: [126]
-    }
-  }
-  function resolveAllStrikethrough(events, context) {
-    let index = -1;
-    while (++index < events.length) {
-      if (
-        events[index][0] === 'enter' &&
-        events[index][1].type === 'strikethroughSequenceTemporary' &&
-        events[index][1]._close
-      ) {
-        let open = index;
-        while (open--) {
-          if (
-            events[open][0] === 'exit' &&
-            events[open][1].type === 'strikethroughSequenceTemporary' &&
-            events[open][1]._open &&
-            events[index][1].end.offset - events[index][1].start.offset ===
-              events[open][1].end.offset - events[open][1].start.offset
-          ) {
-            events[index][1].type = 'strikethroughSequence';
-            events[open][1].type = 'strikethroughSequence';
-            const strikethrough = {
-              type: 'strikethrough',
-              start: Object.assign({}, events[open][1].start),
-              end: Object.assign({}, events[index][1].end)
-            };
-            const text = {
-              type: 'strikethroughText',
-              start: Object.assign({}, events[open][1].end),
-              end: Object.assign({}, events[index][1].start)
-            };
-            const nextEvents = [
-              ['enter', strikethrough, context],
-              ['enter', events[open][1], context],
-              ['exit', events[open][1], context],
-              ['enter', text, context]
-            ];
-            const insideSpan = context.parser.constructs.insideSpan.null;
-            if (insideSpan) {
-              splice(
-                nextEvents,
-                nextEvents.length,
-                0,
-                resolveAll(insideSpan, events.slice(open + 1, index), context)
-              );
-            }
-            splice(nextEvents, nextEvents.length, 0, [
-              ['exit', text, context],
-              ['enter', events[index][1], context],
-              ['exit', events[index][1], context],
-              ['exit', strikethrough, context]
-            ]);
-            splice(events, open - 1, index - open + 3, nextEvents);
-            index = open + nextEvents.length - 2;
-            break
-          }
-        }
-      }
-    }
-    index = -1;
-    while (++index < events.length) {
-      if (events[index][1].type === 'strikethroughSequenceTemporary') {
-        events[index][1].type = 'data';
-      }
-    }
-    return events
-  }
-  function tokenizeStrikethrough(effects, ok, nok) {
-    const previous = this.previous;
-    const events = this.events;
-    let size = 0;
-    return start
-    function start(code) {
-      if (
-        previous === 126 &&
-        events[events.length - 1][1].type !== 'characterEscape'
-      ) {
-        return nok(code)
-      }
-      effects.enter('strikethroughSequenceTemporary');
-      return more(code)
-    }
-    function more(code) {
-      const before = classifyCharacter(previous);
-      if (code === 126) {
-        if (size > 1) return nok(code)
-        effects.consume(code);
-        size++;
-        return more
-      }
-      if (size < 2 && !single) return nok(code)
-      const token = effects.exit('strikethroughSequenceTemporary');
-      const after = classifyCharacter(code);
-      token._open = !after || (after === 2 && Boolean(before));
-      token._close = !before || (before === 2 && Boolean(after));
-      return ok(code)
-    }
-  }
-}
-
-class EditMap {
-  constructor() {
-    this.map = [];
-  }
-  add(index, remove, add) {
-    addImpl(this, index, remove, add);
-  }
-  consume(events) {
-    this.map.sort((a, b) => a[0] - b[0]);
-    if (this.map.length === 0) {
-      return
-    }
-    let index = this.map.length;
-    const vecs = [];
-    while (index > 0) {
-      index -= 1;
-      vecs.push(events.slice(this.map[index][0] + this.map[index][1]));
-      vecs.push(this.map[index][2]);
-      events.length = this.map[index][0];
-    }
-    vecs.push([...events]);
-    events.length = 0;
-    let slice = vecs.pop();
-    while (slice) {
-      events.push(...slice);
-      slice = vecs.pop();
-    }
-    this.map.length = 0;
-  }
-}
-function addImpl(editMap, at, remove, add) {
-  let index = 0;
-  if (remove === 0 && add.length === 0) {
-    return
-  }
-  while (index < editMap.map.length) {
-    if (editMap.map[index][0] === at) {
-      editMap.map[index][1] += remove;
-      editMap.map[index][2].push(...add);
-      return
-    }
-    index += 1;
-  }
-  editMap.map.push([at, remove, add]);
-}
-
-function gfmTableAlign(events, index) {
-  let inDelimiterRow = false;
-  const align = [];
-  while (index < events.length) {
-    const event = events[index];
-    if (inDelimiterRow) {
-      if (event[0] === 'enter') {
-        if (event[1].type === 'tableContent') {
-          align.push(
-            events[index + 1][1].type === 'tableDelimiterMarker'
-              ? 'left'
-              : 'none'
-          );
-        }
-      }
-      else if (event[1].type === 'tableContent') {
-        if (events[index - 1][1].type === 'tableDelimiterMarker') {
-          const alignIndex = align.length - 1;
-          align[alignIndex] = align[alignIndex] === 'left' ? 'center' : 'right';
-        }
-      }
-      else if (event[1].type === 'tableDelimiterRow') {
-        break
-      }
-    } else if (event[0] === 'enter' && event[1].type === 'tableDelimiterRow') {
-      inDelimiterRow = true;
-    }
-    index += 1;
-  }
-  return align
-}
-
-const gfmTable = {
-  flow: {
-    null: {
-      tokenize: tokenizeTable,
-      resolveAll: resolveTable
-    }
-  }
-};
-function tokenizeTable(effects, ok, nok) {
-  const self = this;
-  let size = 0;
-  let sizeB = 0;
-  let seen;
-  return start
-  function start(code) {
-    let index = self.events.length - 1;
-    while (index > -1) {
-      const type = self.events[index][1].type;
-      if (
-        type === 'lineEnding' ||
-        type === 'linePrefix'
-      )
-        index--;
-      else break
-    }
-    const tail = index > -1 ? self.events[index][1].type : null;
-    const next =
-      tail === 'tableHead' || tail === 'tableRow' ? bodyRowStart : headRowBefore;
-    if (next === bodyRowStart && self.parser.lazy[self.now().line]) {
-      return nok(code)
-    }
-    return next(code)
-  }
-  function headRowBefore(code) {
-    effects.enter('tableHead');
-    effects.enter('tableRow');
-    return headRowStart(code)
-  }
-  function headRowStart(code) {
-    if (code === 124) {
-      return headRowBreak(code)
-    }
-    seen = true;
-    sizeB += 1;
-    return headRowBreak(code)
-  }
-  function headRowBreak(code) {
-    if (code === null) {
-      return nok(code)
-    }
-    if (markdownLineEnding(code)) {
-      if (sizeB > 1) {
-        sizeB = 0;
-        self.interrupt = true;
-        effects.exit('tableRow');
-        effects.enter('lineEnding');
-        effects.consume(code);
-        effects.exit('lineEnding');
-        return headDelimiterStart
-      }
-      return nok(code)
-    }
-    if (markdownSpace(code)) {
-      return factorySpace(effects, headRowBreak, 'whitespace')(code)
-    }
-    sizeB += 1;
-    if (seen) {
-      seen = false;
-      size += 1;
-    }
-    if (code === 124) {
-      effects.enter('tableCellDivider');
-      effects.consume(code);
-      effects.exit('tableCellDivider');
-      seen = true;
-      return headRowBreak
-    }
-    effects.enter('data');
-    return headRowData(code)
-  }
-  function headRowData(code) {
-    if (code === null || code === 124 || markdownLineEndingOrSpace(code)) {
-      effects.exit('data');
-      return headRowBreak(code)
-    }
-    effects.consume(code);
-    return code === 92 ? headRowEscape : headRowData
-  }
-  function headRowEscape(code) {
-    if (code === 92 || code === 124) {
-      effects.consume(code);
-      return headRowData
-    }
-    return headRowData(code)
-  }
-  function headDelimiterStart(code) {
-    self.interrupt = false;
-    if (self.parser.lazy[self.now().line]) {
-      return nok(code)
-    }
-    effects.enter('tableDelimiterRow');
-    seen = false;
-    if (markdownSpace(code)) {
-      return factorySpace(
-        effects,
-        headDelimiterBefore,
-        'linePrefix',
-        self.parser.constructs.disable.null.includes('codeIndented')
-          ? undefined
-          : 4
-      )(code)
-    }
-    return headDelimiterBefore(code)
-  }
-  function headDelimiterBefore(code) {
-    if (code === 45 || code === 58) {
-      return headDelimiterValueBefore(code)
-    }
-    if (code === 124) {
-      seen = true;
-      effects.enter('tableCellDivider');
-      effects.consume(code);
-      effects.exit('tableCellDivider');
-      return headDelimiterCellBefore
-    }
-    return headDelimiterNok(code)
-  }
-  function headDelimiterCellBefore(code) {
-    if (markdownSpace(code)) {
-      return factorySpace(effects, headDelimiterValueBefore, 'whitespace')(code)
-    }
-    return headDelimiterValueBefore(code)
-  }
-  function headDelimiterValueBefore(code) {
-    if (code === 58) {
-      sizeB += 1;
-      seen = true;
-      effects.enter('tableDelimiterMarker');
-      effects.consume(code);
-      effects.exit('tableDelimiterMarker');
-      return headDelimiterLeftAlignmentAfter
-    }
-    if (code === 45) {
-      sizeB += 1;
-      return headDelimiterLeftAlignmentAfter(code)
-    }
-    if (code === null || markdownLineEnding(code)) {
-      return headDelimiterCellAfter(code)
-    }
-    return headDelimiterNok(code)
-  }
-  function headDelimiterLeftAlignmentAfter(code) {
-    if (code === 45) {
-      effects.enter('tableDelimiterFiller');
-      return headDelimiterFiller(code)
-    }
-    return headDelimiterNok(code)
-  }
-  function headDelimiterFiller(code) {
-    if (code === 45) {
-      effects.consume(code);
-      return headDelimiterFiller
-    }
-    if (code === 58) {
-      seen = true;
-      effects.exit('tableDelimiterFiller');
-      effects.enter('tableDelimiterMarker');
-      effects.consume(code);
-      effects.exit('tableDelimiterMarker');
-      return headDelimiterRightAlignmentAfter
-    }
-    effects.exit('tableDelimiterFiller');
-    return headDelimiterRightAlignmentAfter(code)
-  }
-  function headDelimiterRightAlignmentAfter(code) {
-    if (markdownSpace(code)) {
-      return factorySpace(effects, headDelimiterCellAfter, 'whitespace')(code)
-    }
-    return headDelimiterCellAfter(code)
-  }
-  function headDelimiterCellAfter(code) {
-    if (code === 124) {
-      return headDelimiterBefore(code)
-    }
-    if (code === null || markdownLineEnding(code)) {
-      if (!seen || size !== sizeB) {
-        return headDelimiterNok(code)
-      }
-      effects.exit('tableDelimiterRow');
-      effects.exit('tableHead');
-      return ok(code)
-    }
-    return headDelimiterNok(code)
-  }
-  function headDelimiterNok(code) {
-    return nok(code)
-  }
-  function bodyRowStart(code) {
-    effects.enter('tableRow');
-    return bodyRowBreak(code)
-  }
-  function bodyRowBreak(code) {
-    if (code === 124) {
-      effects.enter('tableCellDivider');
-      effects.consume(code);
-      effects.exit('tableCellDivider');
-      return bodyRowBreak
-    }
-    if (code === null || markdownLineEnding(code)) {
-      effects.exit('tableRow');
-      return ok(code)
-    }
-    if (markdownSpace(code)) {
-      return factorySpace(effects, bodyRowBreak, 'whitespace')(code)
-    }
-    effects.enter('data');
-    return bodyRowData(code)
-  }
-  function bodyRowData(code) {
-    if (code === null || code === 124 || markdownLineEndingOrSpace(code)) {
-      effects.exit('data');
-      return bodyRowBreak(code)
-    }
-    effects.consume(code);
-    return code === 92 ? bodyRowEscape : bodyRowData
-  }
-  function bodyRowEscape(code) {
-    if (code === 92 || code === 124) {
-      effects.consume(code);
-      return bodyRowData
-    }
-    return bodyRowData(code)
-  }
-}
-function resolveTable(events, context) {
-  let index = -1;
-  let inFirstCellAwaitingPipe = true;
-  let rowKind = 0;
-  let lastCell = [0, 0, 0, 0];
-  let cell = [0, 0, 0, 0];
-  let afterHeadAwaitingFirstBodyRow = false;
-  let lastTableEnd = 0;
-  let currentTable;
-  let currentBody;
-  let currentCell;
-  const map = new EditMap();
-  while (++index < events.length) {
-    const event = events[index];
-    const token = event[1];
-    if (event[0] === 'enter') {
-      if (token.type === 'tableHead') {
-        afterHeadAwaitingFirstBodyRow = false;
-        if (lastTableEnd !== 0) {
-          flushTableEnd(map, context, lastTableEnd, currentTable, currentBody);
-          currentBody = undefined;
-          lastTableEnd = 0;
-        }
-        currentTable = {
-          type: 'table',
-          start: Object.assign({}, token.start),
-          end: Object.assign({}, token.end)
-        };
-        map.add(index, 0, [['enter', currentTable, context]]);
-      } else if (
-        token.type === 'tableRow' ||
-        token.type === 'tableDelimiterRow'
-      ) {
-        inFirstCellAwaitingPipe = true;
-        currentCell = undefined;
-        lastCell = [0, 0, 0, 0];
-        cell = [0, index + 1, 0, 0];
-        if (afterHeadAwaitingFirstBodyRow) {
-          afterHeadAwaitingFirstBodyRow = false;
-          currentBody = {
-            type: 'tableBody',
-            start: Object.assign({}, token.start),
-            end: Object.assign({}, token.end)
-          };
-          map.add(index, 0, [['enter', currentBody, context]]);
-        }
-        rowKind = token.type === 'tableDelimiterRow' ? 2 : currentBody ? 3 : 1;
-      }
-      else if (
-        rowKind &&
-        (token.type === 'data' ||
-          token.type === 'tableDelimiterMarker' ||
-          token.type === 'tableDelimiterFiller')
-      ) {
-        inFirstCellAwaitingPipe = false;
-        if (cell[2] === 0) {
-          if (lastCell[1] !== 0) {
-            cell[0] = cell[1];
-            currentCell = flushCell(
-              map,
-              context,
-              lastCell,
-              rowKind,
-              undefined,
-              currentCell
-            );
-            lastCell = [0, 0, 0, 0];
-          }
-          cell[2] = index;
-        }
-      } else if (token.type === 'tableCellDivider') {
-        if (inFirstCellAwaitingPipe) {
-          inFirstCellAwaitingPipe = false;
-        } else {
-          if (lastCell[1] !== 0) {
-            cell[0] = cell[1];
-            currentCell = flushCell(
-              map,
-              context,
-              lastCell,
-              rowKind,
-              undefined,
-              currentCell
-            );
-          }
-          lastCell = cell;
-          cell = [lastCell[1], index, 0, 0];
-        }
-      }
-    }
-    else if (token.type === 'tableHead') {
-      afterHeadAwaitingFirstBodyRow = true;
-      lastTableEnd = index;
-    } else if (
-      token.type === 'tableRow' ||
-      token.type === 'tableDelimiterRow'
-    ) {
-      lastTableEnd = index;
-      if (lastCell[1] !== 0) {
-        cell[0] = cell[1];
-        currentCell = flushCell(
-          map,
-          context,
-          lastCell,
-          rowKind,
-          index,
-          currentCell
-        );
-      } else if (cell[1] !== 0) {
-        currentCell = flushCell(map, context, cell, rowKind, index, currentCell);
-      }
-      rowKind = 0;
-    } else if (
-      rowKind &&
-      (token.type === 'data' ||
-        token.type === 'tableDelimiterMarker' ||
-        token.type === 'tableDelimiterFiller')
-    ) {
-      cell[3] = index;
-    }
-  }
-  if (lastTableEnd !== 0) {
-    flushTableEnd(map, context, lastTableEnd, currentTable, currentBody);
-  }
-  map.consume(context.events);
-  index = -1;
-  while (++index < context.events.length) {
-    const event = context.events[index];
-    if (event[0] === 'enter' && event[1].type === 'table') {
-      event[1]._align = gfmTableAlign(context.events, index);
-    }
-  }
-  return events
-}
-function flushCell(map, context, range, rowKind, rowEnd, previousCell) {
-  const groupName =
-    rowKind === 1
-      ? 'tableHeader'
-      : rowKind === 2
-      ? 'tableDelimiter'
-      : 'tableData';
-  const valueName = 'tableContent';
-  if (range[0] !== 0) {
-    previousCell.end = Object.assign({}, getPoint(context.events, range[0]));
-    map.add(range[0], 0, [['exit', previousCell, context]]);
-  }
-  const now = getPoint(context.events, range[1]);
-  previousCell = {
-    type: groupName,
-    start: Object.assign({}, now),
-    end: Object.assign({}, now)
-  };
-  map.add(range[1], 0, [['enter', previousCell, context]]);
-  if (range[2] !== 0) {
-    const relatedStart = getPoint(context.events, range[2]);
-    const relatedEnd = getPoint(context.events, range[3]);
-    const valueToken = {
-      type: valueName,
-      start: Object.assign({}, relatedStart),
-      end: Object.assign({}, relatedEnd)
-    };
-    map.add(range[2], 0, [['enter', valueToken, context]]);
-    if (rowKind !== 2) {
-      const start = context.events[range[2]];
-      const end = context.events[range[3]];
-      start[1].end = Object.assign({}, end[1].end);
-      start[1].type = 'chunkText';
-      start[1].contentType = 'text';
-      if (range[3] > range[2] + 1) {
-        const a = range[2] + 1;
-        const b = range[3] - range[2] - 1;
-        map.add(a, b, []);
-      }
-    }
-    map.add(range[3] + 1, 0, [['exit', valueToken, context]]);
-  }
-  if (rowEnd !== undefined) {
-    previousCell.end = Object.assign({}, getPoint(context.events, rowEnd));
-    map.add(rowEnd, 0, [['exit', previousCell, context]]);
-    previousCell = undefined;
-  }
-  return previousCell
-}
-function flushTableEnd(map, context, index, table, tableBody) {
-  const exits = [];
-  const related = getPoint(context.events, index);
-  if (tableBody) {
-    tableBody.end = Object.assign({}, related);
-    exits.push(['exit', tableBody, context]);
-  }
-  table.end = Object.assign({}, related);
-  exits.push(['exit', table, context]);
-  map.add(index + 1, 0, exits);
-}
-function getPoint(events, index) {
-  const event = events[index];
-  const side = event[0] === 'enter' ? 'start' : 'end';
-  return event[1][side]
-}
-
-const tasklistCheck = {
-  tokenize: tokenizeTasklistCheck
-};
-const gfmTaskListItem = {
-  text: {
-    [91]: tasklistCheck
-  }
-};
-function tokenizeTasklistCheck(effects, ok, nok) {
-  const self = this;
-  return open
-  function open(code) {
-    if (
-      self.previous !== null ||
-      !self._gfmTasklistFirstContentOfListItem
-    ) {
-      return nok(code)
-    }
-    effects.enter('taskListCheck');
-    effects.enter('taskListCheckMarker');
-    effects.consume(code);
-    effects.exit('taskListCheckMarker');
-    return inside
-  }
-  function inside(code) {
-    if (markdownLineEndingOrSpace(code)) {
-      effects.enter('taskListCheckValueUnchecked');
-      effects.consume(code);
-      effects.exit('taskListCheckValueUnchecked');
-      return close
-    }
-    if (code === 88 || code === 120) {
-      effects.enter('taskListCheckValueChecked');
-      effects.consume(code);
-      effects.exit('taskListCheckValueChecked');
-      return close
-    }
-    return nok(code)
-  }
-  function close(code) {
-    if (code === 93) {
-      effects.enter('taskListCheckMarker');
-      effects.consume(code);
-      effects.exit('taskListCheckMarker');
-      effects.exit('taskListCheck');
-      return after
-    }
-    return nok(code)
-  }
-  function after(code) {
-    if (markdownLineEnding(code)) {
-      return ok(code)
-    }
-    if (markdownSpace(code)) {
-      return effects.check(
-        {
-          tokenize: spaceThenNonSpace
-        },
-        ok,
-        nok
-      )(code)
-    }
-    return nok(code)
-  }
-}
-function spaceThenNonSpace(effects, ok, nok) {
-  return factorySpace(effects, after, 'whitespace')
-  function after(code) {
-    return code === null ? nok(code) : ok(code)
-  }
-}
-
-function gfm(options) {
-  return combineExtensions([
-    gfmAutolinkLiteral,
-    gfmFootnote(),
-    gfmStrikethrough(options),
-    gfmTable,
-    gfmTaskListItem
-  ])
 }
 
 function ccount(value, character) {
@@ -10923,122 +9172,103 @@ function escapeStringRegexp(string) {
 		.replace(/-/g, '\\x2d');
 }
 
-const own$3 = {}.hasOwnProperty;
-const findAndReplace =
-  (
-    function (tree, find, replace, options) {
-      let settings;
-      let schema;
-      if (typeof find === 'string' || find instanceof RegExp) {
-        schema = [[find, replace]];
-        settings = options;
-      } else {
-        schema = find;
-        settings = replace;
-      }
-      if (!settings) {
-        settings = {};
-      }
-      const ignored = convert(settings.ignore || []);
-      const pairs = toPairs(schema);
-      let pairIndex = -1;
-      while (++pairIndex < pairs.length) {
-        visitParents$1(tree, 'text', visitor);
-      }
-      return tree
-      function visitor(node, parents) {
-        let index = -1;
-        let grandparent;
-        while (++index < parents.length) {
-          const parent = parents[index];
-          if (
-            ignored(
-              parent,
-              grandparent ? grandparent.children.indexOf(parent) : undefined,
-              grandparent
-            )
-          ) {
-            return
-          }
-          grandparent = parent;
-        }
-        if (grandparent) {
-          return handler(node, parents)
-        }
-      }
-      function handler(node, parents) {
-        const parent = parents[parents.length - 1];
-        const find = pairs[pairIndex][0];
-        const replace = pairs[pairIndex][1];
-        let start = 0;
-        const index = parent.children.indexOf(node);
-        let change = false;
-        let nodes = [];
-        find.lastIndex = 0;
-        let match = find.exec(node.value);
-        while (match) {
-          const position = match.index;
-          const matchObject = {
-            index: match.index,
-            input: match.input,
-            stack: [...parents, node]
-          };
-          let value = replace(...match, matchObject);
-          if (typeof value === 'string') {
-            value = value.length > 0 ? {type: 'text', value} : undefined;
-          }
-          if (value !== false) {
-            if (start !== position) {
-              nodes.push({
-                type: 'text',
-                value: node.value.slice(start, position)
-              });
-            }
-            if (Array.isArray(value)) {
-              nodes.push(...value);
-            } else if (value) {
-              nodes.push(value);
-            }
-            start = position + match[0].length;
-            change = true;
-          }
-          if (!find.global) {
-            break
-          }
-          match = find.exec(node.value);
-        }
-        if (change) {
-          if (start < node.value.length) {
-            nodes.push({type: 'text', value: node.value.slice(start)});
-          }
-          parent.children.splice(index, 1, ...nodes);
-        } else {
-          nodes = [node];
-        }
-        return index + nodes.length
-      }
-    }
-  );
-function toPairs(schema) {
-  const result = [];
-  if (typeof schema !== 'object') {
-    throw new TypeError('Expected array or object as schema')
+function findAndReplace(tree, list, options) {
+  const settings = options || {};
+  const ignored = convert(settings.ignore || []);
+  const pairs = toPairs(list);
+  let pairIndex = -1;
+  while (++pairIndex < pairs.length) {
+    visitParents(tree, 'text', visitor);
   }
-  if (Array.isArray(schema)) {
+  function visitor(node, parents) {
     let index = -1;
-    while (++index < schema.length) {
-      result.push([
-        toExpression(schema[index][0]),
-        toFunction(schema[index][1])
-      ]);
-    }
-  } else {
-    let key;
-    for (key in schema) {
-      if (own$3.call(schema, key)) {
-        result.push([toExpression(key), toFunction(schema[key])]);
+    let grandparent;
+    while (++index < parents.length) {
+      const parent = parents[index];
+      const siblings = grandparent ? grandparent.children : undefined;
+      if (
+        ignored(
+          parent,
+          siblings ? siblings.indexOf(parent) : undefined,
+          grandparent
+        )
+      ) {
+        return
       }
+      grandparent = parent;
     }
+    if (grandparent) {
+      return handler(node, parents)
+    }
+  }
+  function handler(node, parents) {
+    const parent = parents[parents.length - 1];
+    const find = pairs[pairIndex][0];
+    const replace = pairs[pairIndex][1];
+    let start = 0;
+    const siblings = parent.children;
+    const index = siblings.indexOf(node);
+    let change = false;
+    let nodes = [];
+    find.lastIndex = 0;
+    let match = find.exec(node.value);
+    while (match) {
+      const position = match.index;
+      const matchObject = {
+        index: match.index,
+        input: match.input,
+        stack: [...parents, node]
+      };
+      let value = replace(...match, matchObject);
+      if (typeof value === 'string') {
+        value = value.length > 0 ? {type: 'text', value} : undefined;
+      }
+      if (value === false) {
+        find.lastIndex = position + 1;
+      } else {
+        if (start !== position) {
+          nodes.push({
+            type: 'text',
+            value: node.value.slice(start, position)
+          });
+        }
+        if (Array.isArray(value)) {
+          nodes.push(...value);
+        } else if (value) {
+          nodes.push(value);
+        }
+        start = position + match[0].length;
+        change = true;
+      }
+      if (!find.global) {
+        break
+      }
+      match = find.exec(node.value);
+    }
+    if (change) {
+      if (start < node.value.length) {
+        nodes.push({type: 'text', value: node.value.slice(start)});
+      }
+      parent.children.splice(index, 1, ...nodes);
+    } else {
+      nodes = [node];
+    }
+    return index + nodes.length
+  }
+}
+function toPairs(tupleOrList) {
+  const result = [];
+  if (!Array.isArray(tupleOrList)) {
+    throw new TypeError('Expected find and replace tuple or list of tuples')
+  }
+  const list =
+    !tupleOrList[0] || Array.isArray(tupleOrList[0])
+      ? tupleOrList
+      : [tupleOrList];
+  let index = -1;
+  while (++index < list.length) {
+    const tuple = list[index];
+    result.push([toExpression(tuple[0]), toFunction(tuple[1])]);
   }
   return result
 }
@@ -11046,45 +9276,59 @@ function toExpression(find) {
   return typeof find === 'string' ? new RegExp(escapeStringRegexp(find), 'g') : find
 }
 function toFunction(replace) {
-  return typeof replace === 'function' ? replace : () => replace
+  return typeof replace === 'function'
+    ? replace
+    : function () {
+        return replace
+      }
 }
 
 const inConstruct = 'phrasing';
 const notInConstruct = ['autolink', 'link', 'image', 'label'];
-const gfmAutolinkLiteralFromMarkdown = {
-  transforms: [transformGfmAutolinkLiterals],
-  enter: {
-    literalAutolink: enterLiteralAutolink,
-    literalAutolinkEmail: enterLiteralAutolinkValue,
-    literalAutolinkHttp: enterLiteralAutolinkValue,
-    literalAutolinkWww: enterLiteralAutolinkValue
-  },
-  exit: {
-    literalAutolink: exitLiteralAutolink,
-    literalAutolinkEmail: exitLiteralAutolinkEmail,
-    literalAutolinkHttp: exitLiteralAutolinkHttp,
-    literalAutolinkWww: exitLiteralAutolinkWww
+function gfmAutolinkLiteralFromMarkdown() {
+  return {
+    transforms: [transformGfmAutolinkLiterals],
+    enter: {
+      literalAutolink: enterLiteralAutolink,
+      literalAutolinkEmail: enterLiteralAutolinkValue,
+      literalAutolinkHttp: enterLiteralAutolinkValue,
+      literalAutolinkWww: enterLiteralAutolinkValue
+    },
+    exit: {
+      literalAutolink: exitLiteralAutolink,
+      literalAutolinkEmail: exitLiteralAutolinkEmail,
+      literalAutolinkHttp: exitLiteralAutolinkHttp,
+      literalAutolinkWww: exitLiteralAutolinkWww
+    }
   }
-};
-const gfmAutolinkLiteralToMarkdown = {
-  unsafe: [
-    {
-      character: '@',
-      before: '[+\\-.\\w]',
-      after: '[\\-.\\w]',
-      inConstruct,
-      notInConstruct
-    },
-    {
-      character: '.',
-      before: '[Ww]',
-      after: '[\\-.\\w]',
-      inConstruct,
-      notInConstruct
-    },
-    {character: ':', before: '[ps]', after: '\\/', inConstruct, notInConstruct}
-  ]
-};
+}
+function gfmAutolinkLiteralToMarkdown() {
+  return {
+    unsafe: [
+      {
+        character: '@',
+        before: '[+\\-.\\w]',
+        after: '[\\-.\\w]',
+        inConstruct,
+        notInConstruct
+      },
+      {
+        character: '.',
+        before: '[Ww]',
+        after: '[\\-.\\w]',
+        inConstruct,
+        notInConstruct
+      },
+      {
+        character: ':',
+        before: '[ps]',
+        after: '\\/',
+        inConstruct,
+        notInConstruct
+      }
+    ]
+  }
+}
 function enterLiteralAutolink(token) {
   this.enter({type: 'link', title: null, url: '', children: []}, token);
 }
@@ -11096,7 +9340,8 @@ function exitLiteralAutolinkHttp(token) {
 }
 function exitLiteralAutolinkWww(token) {
   this.config.exit.data.call(this, token);
-  const node =  (this.stack[this.stack.length - 1]);
+  const node = this.stack[this.stack.length - 1];
+  ok$1(node.type === 'link');
   node.url = 'http://' + this.sliceSerialize(token);
 }
 function exitLiteralAutolinkEmail(token) {
@@ -11232,9 +9477,8 @@ function enterFootnoteDefinitionLabelString() {
 }
 function exitFootnoteDefinitionLabelString(token) {
   const label = this.resume();
-  const node =  (
-    this.stack[this.stack.length - 1]
-  );
+  const node = this.stack[this.stack.length - 1];
+  ok$1(node.type === 'footnoteDefinition');
   node.label = label;
   node.identifier = normalizeIdentifier(
     this.sliceSerialize(token)
@@ -11251,9 +9495,8 @@ function enterFootnoteCallString() {
 }
 function exitFootnoteCallString(token) {
   const label = this.resume();
-  const node =  (
-    this.stack[this.stack.length - 1]
-  );
+  const node = this.stack[this.stack.length - 1];
+  ok$1(node.type === 'footnoteReference');
   node.label = label;
   node.identifier = normalizeIdentifier(
     this.sliceSerialize(token)
@@ -11262,13 +9505,13 @@ function exitFootnoteCallString(token) {
 function exitFootnoteCall(token) {
   this.exit(token);
 }
-function footnoteReference(node, _, context, safeOptions) {
-  const tracker = track(safeOptions);
+function footnoteReference(node, _, state, info) {
+  const tracker = state.createTracker(info);
   let value = tracker.move('[^');
-  const exit = context.enter('footnoteReference');
-  const subexit = context.enter('reference');
+  const exit = state.enter('footnoteReference');
+  const subexit = state.enter('reference');
   value += tracker.move(
-    safe(context, association(node), {
+    state.safe(state.associationId(node), {
       ...tracker.current(),
       before: value,
       after: ']'
@@ -11282,13 +9525,13 @@ function footnoteReference(node, _, context, safeOptions) {
 function footnoteReferencePeek() {
   return '['
 }
-function footnoteDefinition(node, _, context, safeOptions) {
-  const tracker = track(safeOptions);
+function footnoteDefinition(node, _, state, info) {
+  const tracker = state.createTracker(info);
   let value = tracker.move('[^');
-  const exit = context.enter('footnoteDefinition');
-  const subexit = context.enter('label');
+  const exit = state.enter('footnoteDefinition');
+  const subexit = state.enter('label');
   value += tracker.move(
-    safe(context, association(node), {
+    state.safe(state.associationId(node), {
       ...tracker.current(),
       before: value,
       after: ']'
@@ -11300,7 +9543,7 @@ function footnoteDefinition(node, _, context, safeOptions) {
   );
   tracker.shift(4);
   value += tracker.move(
-    indentLines(containerFlow(node, context, tracker.current()), map$1)
+    state.indentLines(state.containerFlow(node, tracker.current()), map$1)
   );
   exit();
   return value
@@ -11321,32 +9564,36 @@ const constructsWithoutStrikethrough = [
   'titleApostrophe'
 ];
 handleDelete.peek = peekDelete;
-const gfmStrikethroughFromMarkdown = {
-  canContainEols: ['delete'],
-  enter: {strikethrough: enterStrikethrough},
-  exit: {strikethrough: exitStrikethrough}
-};
-const gfmStrikethroughToMarkdown = {
-  unsafe: [
-    {
-      character: '~',
-      inConstruct: 'phrasing',
-      notInConstruct: constructsWithoutStrikethrough
-    }
-  ],
-  handlers: {delete: handleDelete}
-};
+function gfmStrikethroughFromMarkdown() {
+  return {
+    canContainEols: ['delete'],
+    enter: {strikethrough: enterStrikethrough},
+    exit: {strikethrough: exitStrikethrough}
+  }
+}
+function gfmStrikethroughToMarkdown() {
+  return {
+    unsafe: [
+      {
+        character: '~',
+        inConstruct: 'phrasing',
+        notInConstruct: constructsWithoutStrikethrough
+      }
+    ],
+    handlers: {delete: handleDelete}
+  }
+}
 function enterStrikethrough(token) {
   this.enter({type: 'delete', children: []}, token);
 }
 function exitStrikethrough(token) {
   this.exit(token);
 }
-function handleDelete(node, _, context, safeOptions) {
-  const tracker = track(safeOptions);
-  const exit = context.enter('strikethrough');
+function handleDelete(node, _, state, info) {
+  const tracker = state.createTracker(info);
+  const exit = state.enter('strikethrough');
   let value = tracker.move('~~');
-  value += containerPhrasing(node, context, {
+  value += state.containerPhrasing(node, {
     ...tracker.current(),
     before: value,
     after: '~'
@@ -11518,36 +9765,40 @@ function toAlignment(value) {
     : 0
 }
 
-const gfmTableFromMarkdown = {
-  enter: {
-    table: enterTable,
-    tableData: enterCell,
-    tableHeader: enterCell,
-    tableRow: enterRow
-  },
-  exit: {
-    codeText: exitCodeText,
-    table: exitTable,
-    tableData: exit,
-    tableHeader: exit,
-    tableRow: exit
+function gfmTableFromMarkdown() {
+  return {
+    enter: {
+      table: enterTable,
+      tableData: enterCell,
+      tableHeader: enterCell,
+      tableRow: enterRow
+    },
+    exit: {
+      codeText: exitCodeText,
+      table: exitTable,
+      tableData: exit,
+      tableHeader: exit,
+      tableRow: exit
+    }
   }
-};
+}
 function enterTable(token) {
   const align = token._align;
   this.enter(
     {
       type: 'table',
-      align: align.map((d) => (d === 'none' ? null : d)),
+      align: align.map(function (d) {
+        return d === 'none' ? null : d
+      }),
       children: []
     },
     token
   );
-  this.setData('inTable', true);
+  this.data.inTable = true;
 }
 function exitTable(token) {
   this.exit(token);
-  this.setData('inTable');
+  this.data.inTable = undefined;
 }
 function enterRow(token) {
   this.enter({type: 'tableRow', children: []}, token);
@@ -11560,10 +9811,11 @@ function enterCell(token) {
 }
 function exitCodeText(token) {
   let value = this.resume();
-  if (this.getData('inTable')) {
+  if (this.data.inTable) {
     value = value.replace(/\\([\\|])/g, replace);
   }
-  const node =  (this.stack[this.stack.length - 1]);
+  const node = this.stack[this.stack.length - 1];
+  ok$1(node.type === 'inlineCode');
   node.value = value;
   this.exit(token);
 }
@@ -11586,28 +9838,25 @@ function gfmTableToMarkdown(options) {
       {atBreak: true, character: '-', after: '[:|-]'}
     ],
     handlers: {
+      inlineCode: inlineCodeWithTable,
       table: handleTable,
-      tableRow: handleTableRow,
       tableCell: handleTableCell,
-      inlineCode: inlineCodeWithTable
+      tableRow: handleTableRow
     }
   }
-  function handleTable(node, _, context, safeOptions) {
-    return serializeData(
-      handleTableAsData(node, context, safeOptions),
-      node.align
-    )
+  function handleTable(node, _, state, info) {
+    return serializeData(handleTableAsData(node, state, info), node.align)
   }
-  function handleTableRow(node, _, context, safeOptions) {
-    const row = handleTableRowAsData(node, context, safeOptions);
+  function handleTableRow(node, _, state, info) {
+    const row = handleTableRowAsData(node, state, info);
     const value = serializeData([row]);
     return value.slice(0, value.indexOf('\n'))
   }
-  function handleTableCell(node, _, context, safeOptions) {
-    const exit = context.enter('tableCell');
-    const subexit = context.enter('phrasing');
-    const value = containerPhrasing(node, context, {
-      ...safeOptions,
+  function handleTableCell(node, _, state, info) {
+    const exit = state.enter('tableCell');
+    const subexit = state.enter('phrasing');
+    const value = state.containerPhrasing(node, {
+      ...info,
       before: around,
       after: around
     });
@@ -11623,69 +9872,66 @@ function gfmTableToMarkdown(options) {
       stringLength
     })
   }
-  function handleTableAsData(node, context, safeOptions) {
+  function handleTableAsData(node, state, info) {
     const children = node.children;
     let index = -1;
     const result = [];
-    const subexit = context.enter('table');
+    const subexit = state.enter('table');
     while (++index < children.length) {
-      result[index] = handleTableRowAsData(
-        children[index],
-        context,
-        safeOptions
-      );
+      result[index] = handleTableRowAsData(children[index], state, info);
     }
     subexit();
     return result
   }
-  function handleTableRowAsData(node, context, safeOptions) {
+  function handleTableRowAsData(node, state, info) {
     const children = node.children;
     let index = -1;
     const result = [];
-    const subexit = context.enter('tableRow');
+    const subexit = state.enter('tableRow');
     while (++index < children.length) {
-      result[index] = handleTableCell(
-        children[index],
-        node,
-        context,
-        safeOptions
-      );
+      result[index] = handleTableCell(children[index], node, state, info);
     }
     subexit();
     return result
   }
-  function inlineCodeWithTable(node, parent, context) {
-    let value = inlineCode(node, parent, context);
-    if (context.stack.includes('tableCell')) {
+  function inlineCodeWithTable(node, parent, state) {
+    let value = handle.inlineCode(node, parent, state);
+    if (state.stack.includes('tableCell')) {
       value = value.replace(/\|/g, '\\$&');
     }
     return value
   }
 }
 
-const gfmTaskListItemFromMarkdown = {
-  exit: {
-    taskListCheckValueChecked: exitCheck,
-    taskListCheckValueUnchecked: exitCheck,
-    paragraph: exitParagraphWithTaskListItem
+function gfmTaskListItemFromMarkdown() {
+  return {
+    exit: {
+      taskListCheckValueChecked: exitCheck,
+      taskListCheckValueUnchecked: exitCheck,
+      paragraph: exitParagraphWithTaskListItem
+    }
   }
-};
-const gfmTaskListItemToMarkdown = {
-  unsafe: [{atBreak: true, character: '-', after: '[:|-]'}],
-  handlers: {listItem: listItemWithTaskListItem}
-};
+}
+function gfmTaskListItemToMarkdown() {
+  return {
+    unsafe: [{atBreak: true, character: '-', after: '[:|-]'}],
+    handlers: {listItem: listItemWithTaskListItem}
+  }
+}
 function exitCheck(token) {
-  const node =  (this.stack[this.stack.length - 2]);
+  const node = this.stack[this.stack.length - 2];
+  ok$1(node.type === 'listItem');
   node.checked = token.type === 'taskListCheckValueChecked';
 }
 function exitParagraphWithTaskListItem(token) {
-  const parent =  (this.stack[this.stack.length - 2]);
+  const parent = this.stack[this.stack.length - 2];
   if (
     parent &&
     parent.type === 'listItem' &&
     typeof parent.checked === 'boolean'
   ) {
-    const node =  (this.stack[this.stack.length - 1]);
+    const node = this.stack[this.stack.length - 1];
+    ok$1(node.type === 'paragraph');
     const head = node.children[0];
     if (head && head.type === 'text') {
       const siblings = parent.children;
@@ -11716,17 +9962,17 @@ function exitParagraphWithTaskListItem(token) {
   }
   this.exit(token);
 }
-function listItemWithTaskListItem(node, parent, context, safeOptions) {
+function listItemWithTaskListItem(node, parent, state, info) {
   const head = node.children[0];
   const checkable =
     typeof node.checked === 'boolean' && head && head.type === 'paragraph';
   const checkbox = '[' + (node.checked ? 'x' : ' ') + '] ';
-  const tracker = track(safeOptions);
+  const tracker = state.createTracker(info);
   if (checkable) {
     tracker.move(checkbox);
   }
-  let value = listItem(node, parent, context, {
-    ...safeOptions,
+  let value = handle.listItem(node, parent, state, {
+    ...info,
     ...tracker.current()
   });
   if (checkable) {
@@ -11740,42 +9986,1331 @@ function listItemWithTaskListItem(node, parent, context, safeOptions) {
 
 function gfmFromMarkdown() {
   return [
-    gfmAutolinkLiteralFromMarkdown,
+    gfmAutolinkLiteralFromMarkdown(),
     gfmFootnoteFromMarkdown(),
-    gfmStrikethroughFromMarkdown,
-    gfmTableFromMarkdown,
-    gfmTaskListItemFromMarkdown
+    gfmStrikethroughFromMarkdown(),
+    gfmTableFromMarkdown(),
+    gfmTaskListItemFromMarkdown()
   ]
 }
 function gfmToMarkdown(options) {
   return {
     extensions: [
-      gfmAutolinkLiteralToMarkdown,
+      gfmAutolinkLiteralToMarkdown(),
       gfmFootnoteToMarkdown(),
-      gfmStrikethroughToMarkdown,
+      gfmStrikethroughToMarkdown(),
       gfmTableToMarkdown(options),
-      gfmTaskListItemToMarkdown
+      gfmTaskListItemToMarkdown()
     ]
   }
 }
 
-function remarkGfm(options = {}) {
-  const data = this.data();
-  add('micromarkExtensions', gfm(options));
-  add('fromMarkdownExtensions', gfmFromMarkdown());
-  add('toMarkdownExtensions', gfmToMarkdown(options));
-  function add(field, value) {
-    const list =  (
-      data[field] ? data[field] : (data[field] = [])
-    );
-    list.push(value);
+const wwwPrefix = {
+  tokenize: tokenizeWwwPrefix,
+  partial: true
+};
+const domain = {
+  tokenize: tokenizeDomain,
+  partial: true
+};
+const path = {
+  tokenize: tokenizePath,
+  partial: true
+};
+const trail = {
+  tokenize: tokenizeTrail,
+  partial: true
+};
+const emailDomainDotTrail = {
+  tokenize: tokenizeEmailDomainDotTrail,
+  partial: true
+};
+const wwwAutolink = {
+  name: 'wwwAutolink',
+  tokenize: tokenizeWwwAutolink,
+  previous: previousWww
+};
+const protocolAutolink = {
+  name: 'protocolAutolink',
+  tokenize: tokenizeProtocolAutolink,
+  previous: previousProtocol
+};
+const emailAutolink = {
+  name: 'emailAutolink',
+  tokenize: tokenizeEmailAutolink,
+  previous: previousEmail
+};
+const text = {};
+function gfmAutolinkLiteral() {
+  return {
+    text
+  };
+}
+let code = 48;
+while (code < 123) {
+  text[code] = emailAutolink;
+  code++;
+  if (code === 58) code = 65;else if (code === 91) code = 97;
+}
+text[43] = emailAutolink;
+text[45] = emailAutolink;
+text[46] = emailAutolink;
+text[95] = emailAutolink;
+text[72] = [emailAutolink, protocolAutolink];
+text[104] = [emailAutolink, protocolAutolink];
+text[87] = [emailAutolink, wwwAutolink];
+text[119] = [emailAutolink, wwwAutolink];
+function tokenizeEmailAutolink(effects, ok, nok) {
+  const self = this;
+  let dot;
+  let data;
+  return start;
+  function start(code) {
+    if (!gfmAtext(code) || !previousEmail.call(self, self.previous) || previousUnbalanced(self.events)) {
+      return nok(code);
+    }
+    effects.enter('literalAutolink');
+    effects.enter('literalAutolinkEmail');
+    return atext(code);
+  }
+  function atext(code) {
+    if (gfmAtext(code)) {
+      effects.consume(code);
+      return atext;
+    }
+    if (code === 64) {
+      effects.consume(code);
+      return emailDomain;
+    }
+    return nok(code);
+  }
+  function emailDomain(code) {
+    if (code === 46) {
+      return effects.check(emailDomainDotTrail, emailDomainAfter, emailDomainDot)(code);
+    }
+    if (code === 45 || code === 95 || asciiAlphanumeric(code)) {
+      data = true;
+      effects.consume(code);
+      return emailDomain;
+    }
+    return emailDomainAfter(code);
+  }
+  function emailDomainDot(code) {
+    effects.consume(code);
+    dot = true;
+    return emailDomain;
+  }
+  function emailDomainAfter(code) {
+    if (data && dot && asciiAlpha(self.previous)) {
+      effects.exit('literalAutolinkEmail');
+      effects.exit('literalAutolink');
+      return ok(code);
+    }
+    return nok(code);
+  }
+}
+function tokenizeWwwAutolink(effects, ok, nok) {
+  const self = this;
+  return wwwStart;
+  function wwwStart(code) {
+    if (code !== 87 && code !== 119 || !previousWww.call(self, self.previous) || previousUnbalanced(self.events)) {
+      return nok(code);
+    }
+    effects.enter('literalAutolink');
+    effects.enter('literalAutolinkWww');
+    return effects.check(wwwPrefix, effects.attempt(domain, effects.attempt(path, wwwAfter), nok), nok)(code);
+  }
+  function wwwAfter(code) {
+    effects.exit('literalAutolinkWww');
+    effects.exit('literalAutolink');
+    return ok(code);
+  }
+}
+function tokenizeProtocolAutolink(effects, ok, nok) {
+  const self = this;
+  let buffer = '';
+  let seen = false;
+  return protocolStart;
+  function protocolStart(code) {
+    if ((code === 72 || code === 104) && previousProtocol.call(self, self.previous) && !previousUnbalanced(self.events)) {
+      effects.enter('literalAutolink');
+      effects.enter('literalAutolinkHttp');
+      buffer += String.fromCodePoint(code);
+      effects.consume(code);
+      return protocolPrefixInside;
+    }
+    return nok(code);
+  }
+  function protocolPrefixInside(code) {
+    if (asciiAlpha(code) && buffer.length < 5) {
+      buffer += String.fromCodePoint(code);
+      effects.consume(code);
+      return protocolPrefixInside;
+    }
+    if (code === 58) {
+      const protocol = buffer.toLowerCase();
+      if (protocol === 'http' || protocol === 'https') {
+        effects.consume(code);
+        return protocolSlashesInside;
+      }
+    }
+    return nok(code);
+  }
+  function protocolSlashesInside(code) {
+    if (code === 47) {
+      effects.consume(code);
+      if (seen) {
+        return afterProtocol;
+      }
+      seen = true;
+      return protocolSlashesInside;
+    }
+    return nok(code);
+  }
+  function afterProtocol(code) {
+    return code === null || asciiControl(code) || markdownLineEndingOrSpace(code) || unicodeWhitespace(code) || unicodePunctuation(code) ? nok(code) : effects.attempt(domain, effects.attempt(path, protocolAfter), nok)(code);
+  }
+  function protocolAfter(code) {
+    effects.exit('literalAutolinkHttp');
+    effects.exit('literalAutolink');
+    return ok(code);
+  }
+}
+function tokenizeWwwPrefix(effects, ok, nok) {
+  let size = 0;
+  return wwwPrefixInside;
+  function wwwPrefixInside(code) {
+    if ((code === 87 || code === 119) && size < 3) {
+      size++;
+      effects.consume(code);
+      return wwwPrefixInside;
+    }
+    if (code === 46 && size === 3) {
+      effects.consume(code);
+      return wwwPrefixAfter;
+    }
+    return nok(code);
+  }
+  function wwwPrefixAfter(code) {
+    return code === null ? nok(code) : ok(code);
+  }
+}
+function tokenizeDomain(effects, ok, nok) {
+  let underscoreInLastSegment;
+  let underscoreInLastLastSegment;
+  let seen;
+  return domainInside;
+  function domainInside(code) {
+    if (code === 46 || code === 95) {
+      return effects.check(trail, domainAfter, domainAtPunctuation)(code);
+    }
+    if (code === null || markdownLineEndingOrSpace(code) || unicodeWhitespace(code) || code !== 45 && unicodePunctuation(code)) {
+      return domainAfter(code);
+    }
+    seen = true;
+    effects.consume(code);
+    return domainInside;
+  }
+  function domainAtPunctuation(code) {
+    if (code === 95) {
+      underscoreInLastSegment = true;
+    }
+    else {
+      underscoreInLastLastSegment = underscoreInLastSegment;
+      underscoreInLastSegment = undefined;
+    }
+    effects.consume(code);
+    return domainInside;
+  }
+  function domainAfter(code) {
+    if (underscoreInLastLastSegment || underscoreInLastSegment || !seen) {
+      return nok(code);
+    }
+    return ok(code);
+  }
+}
+function tokenizePath(effects, ok) {
+  let sizeOpen = 0;
+  let sizeClose = 0;
+  return pathInside;
+  function pathInside(code) {
+    if (code === 40) {
+      sizeOpen++;
+      effects.consume(code);
+      return pathInside;
+    }
+    if (code === 41 && sizeClose < sizeOpen) {
+      return pathAtPunctuation(code);
+    }
+    if (code === 33 || code === 34 || code === 38 || code === 39 || code === 41 || code === 42 || code === 44 || code === 46 || code === 58 || code === 59 || code === 60 || code === 63 || code === 93 || code === 95 || code === 126) {
+      return effects.check(trail, ok, pathAtPunctuation)(code);
+    }
+    if (code === null || markdownLineEndingOrSpace(code) || unicodeWhitespace(code)) {
+      return ok(code);
+    }
+    effects.consume(code);
+    return pathInside;
+  }
+  function pathAtPunctuation(code) {
+    if (code === 41) {
+      sizeClose++;
+    }
+    effects.consume(code);
+    return pathInside;
+  }
+}
+function tokenizeTrail(effects, ok, nok) {
+  return trail;
+  function trail(code) {
+    if (code === 33 || code === 34 || code === 39 || code === 41 || code === 42 || code === 44 || code === 46 || code === 58 || code === 59 || code === 63 || code === 95 || code === 126) {
+      effects.consume(code);
+      return trail;
+    }
+    if (code === 38) {
+      effects.consume(code);
+      return trailCharacterReferenceStart;
+    }
+    if (code === 93) {
+      effects.consume(code);
+      return trailBracketAfter;
+    }
+    if (
+    code === 60 ||
+    code === null || markdownLineEndingOrSpace(code) || unicodeWhitespace(code)) {
+      return ok(code);
+    }
+    return nok(code);
+  }
+  function trailBracketAfter(code) {
+    if (code === null || code === 40 || code === 91 || markdownLineEndingOrSpace(code) || unicodeWhitespace(code)) {
+      return ok(code);
+    }
+    return trail(code);
+  }
+  function trailCharacterReferenceStart(code) {
+    return asciiAlpha(code) ? trailCharacterReferenceInside(code) : nok(code);
+  }
+  function trailCharacterReferenceInside(code) {
+    if (code === 59) {
+      effects.consume(code);
+      return trail;
+    }
+    if (asciiAlpha(code)) {
+      effects.consume(code);
+      return trailCharacterReferenceInside;
+    }
+    return nok(code);
+  }
+}
+function tokenizeEmailDomainDotTrail(effects, ok, nok) {
+  return start;
+  function start(code) {
+    effects.consume(code);
+    return after;
+  }
+  function after(code) {
+    return asciiAlphanumeric(code) ? nok(code) : ok(code);
+  }
+}
+function previousWww(code) {
+  return code === null || code === 40 || code === 42 || code === 95 || code === 91 || code === 93 || code === 126 || markdownLineEndingOrSpace(code);
+}
+function previousProtocol(code) {
+  return !asciiAlpha(code);
+}
+function previousEmail(code) {
+  return !(code === 47 || gfmAtext(code));
+}
+function gfmAtext(code) {
+  return code === 43 || code === 45 || code === 46 || code === 95 || asciiAlphanumeric(code);
+}
+function previousUnbalanced(events) {
+  let index = events.length;
+  let result = false;
+  while (index--) {
+    const token = events[index][1];
+    if ((token.type === 'labelLink' || token.type === 'labelImage') && !token._balanced) {
+      result = true;
+      break;
+    }
+    if (token._gfmAutolinkLiteralWalkedInto) {
+      result = false;
+      break;
+    }
+  }
+  if (events.length > 0 && !result) {
+    events[events.length - 1][1]._gfmAutolinkLiteralWalkedInto = true;
+  }
+  return result;
+}
+
+const indent = {
+  tokenize: tokenizeIndent,
+  partial: true
+};
+function gfmFootnote() {
+  return {
+    document: {
+      [91]: {
+        name: 'gfmFootnoteDefinition',
+        tokenize: tokenizeDefinitionStart,
+        continuation: {
+          tokenize: tokenizeDefinitionContinuation
+        },
+        exit: gfmFootnoteDefinitionEnd
+      }
+    },
+    text: {
+      [91]: {
+        name: 'gfmFootnoteCall',
+        tokenize: tokenizeGfmFootnoteCall
+      },
+      [93]: {
+        name: 'gfmPotentialFootnoteCall',
+        add: 'after',
+        tokenize: tokenizePotentialGfmFootnoteCall,
+        resolveTo: resolveToPotentialGfmFootnoteCall
+      }
+    }
+  };
+}
+function tokenizePotentialGfmFootnoteCall(effects, ok, nok) {
+  const self = this;
+  let index = self.events.length;
+  const defined = self.parser.gfmFootnotes || (self.parser.gfmFootnotes = []);
+  let labelStart;
+  while (index--) {
+    const token = self.events[index][1];
+    if (token.type === "labelImage") {
+      labelStart = token;
+      break;
+    }
+    if (token.type === 'gfmFootnoteCall' || token.type === "labelLink" || token.type === "label" || token.type === "image" || token.type === "link") {
+      break;
+    }
+  }
+  return start;
+  function start(code) {
+    if (!labelStart || !labelStart._balanced) {
+      return nok(code);
+    }
+    const id = normalizeIdentifier(self.sliceSerialize({
+      start: labelStart.end,
+      end: self.now()
+    }));
+    if (id.codePointAt(0) !== 94 || !defined.includes(id.slice(1))) {
+      return nok(code);
+    }
+    effects.enter('gfmFootnoteCallLabelMarker');
+    effects.consume(code);
+    effects.exit('gfmFootnoteCallLabelMarker');
+    return ok(code);
+  }
+}
+function resolveToPotentialGfmFootnoteCall(events, context) {
+  let index = events.length;
+  while (index--) {
+    if (events[index][1].type === "labelImage" && events[index][0] === 'enter') {
+      events[index][1];
+      break;
+    }
+  }
+  events[index + 1][1].type = "data";
+  events[index + 3][1].type = 'gfmFootnoteCallLabelMarker';
+  const call = {
+    type: 'gfmFootnoteCall',
+    start: Object.assign({}, events[index + 3][1].start),
+    end: Object.assign({}, events[events.length - 1][1].end)
+  };
+  const marker = {
+    type: 'gfmFootnoteCallMarker',
+    start: Object.assign({}, events[index + 3][1].end),
+    end: Object.assign({}, events[index + 3][1].end)
+  };
+  marker.end.column++;
+  marker.end.offset++;
+  marker.end._bufferIndex++;
+  const string = {
+    type: 'gfmFootnoteCallString',
+    start: Object.assign({}, marker.end),
+    end: Object.assign({}, events[events.length - 1][1].start)
+  };
+  const chunk = {
+    type: "chunkString",
+    contentType: 'string',
+    start: Object.assign({}, string.start),
+    end: Object.assign({}, string.end)
+  };
+  const replacement = [
+  events[index + 1], events[index + 2], ['enter', call, context],
+  events[index + 3], events[index + 4],
+  ['enter', marker, context], ['exit', marker, context],
+  ['enter', string, context], ['enter', chunk, context], ['exit', chunk, context], ['exit', string, context],
+  events[events.length - 2], events[events.length - 1], ['exit', call, context]];
+  events.splice(index, events.length - index + 1, ...replacement);
+  return events;
+}
+function tokenizeGfmFootnoteCall(effects, ok, nok) {
+  const self = this;
+  const defined = self.parser.gfmFootnotes || (self.parser.gfmFootnotes = []);
+  let size = 0;
+  let data;
+  return start;
+  function start(code) {
+    effects.enter('gfmFootnoteCall');
+    effects.enter('gfmFootnoteCallLabelMarker');
+    effects.consume(code);
+    effects.exit('gfmFootnoteCallLabelMarker');
+    return callStart;
+  }
+  function callStart(code) {
+    if (code !== 94) return nok(code);
+    effects.enter('gfmFootnoteCallMarker');
+    effects.consume(code);
+    effects.exit('gfmFootnoteCallMarker');
+    effects.enter('gfmFootnoteCallString');
+    effects.enter('chunkString').contentType = 'string';
+    return callData;
+  }
+  function callData(code) {
+    if (
+    size > 999 ||
+    code === 93 && !data ||
+    code === null || code === 91 || markdownLineEndingOrSpace(code)) {
+      return nok(code);
+    }
+    if (code === 93) {
+      effects.exit('chunkString');
+      const token = effects.exit('gfmFootnoteCallString');
+      if (!defined.includes(normalizeIdentifier(self.sliceSerialize(token)))) {
+        return nok(code);
+      }
+      effects.enter('gfmFootnoteCallLabelMarker');
+      effects.consume(code);
+      effects.exit('gfmFootnoteCallLabelMarker');
+      effects.exit('gfmFootnoteCall');
+      return ok;
+    }
+    if (!markdownLineEndingOrSpace(code)) {
+      data = true;
+    }
+    size++;
+    effects.consume(code);
+    return code === 92 ? callEscape : callData;
+  }
+  function callEscape(code) {
+    if (code === 91 || code === 92 || code === 93) {
+      effects.consume(code);
+      size++;
+      return callData;
+    }
+    return callData(code);
+  }
+}
+function tokenizeDefinitionStart(effects, ok, nok) {
+  const self = this;
+  const defined = self.parser.gfmFootnotes || (self.parser.gfmFootnotes = []);
+  let identifier;
+  let size = 0;
+  let data;
+  return start;
+  function start(code) {
+    effects.enter('gfmFootnoteDefinition')._container = true;
+    effects.enter('gfmFootnoteDefinitionLabel');
+    effects.enter('gfmFootnoteDefinitionLabelMarker');
+    effects.consume(code);
+    effects.exit('gfmFootnoteDefinitionLabelMarker');
+    return labelAtMarker;
+  }
+  function labelAtMarker(code) {
+    if (code === 94) {
+      effects.enter('gfmFootnoteDefinitionMarker');
+      effects.consume(code);
+      effects.exit('gfmFootnoteDefinitionMarker');
+      effects.enter('gfmFootnoteDefinitionLabelString');
+      effects.enter('chunkString').contentType = 'string';
+      return labelInside;
+    }
+    return nok(code);
+  }
+  function labelInside(code) {
+    if (
+    size > 999 ||
+    code === 93 && !data ||
+    code === null || code === 91 || markdownLineEndingOrSpace(code)) {
+      return nok(code);
+    }
+    if (code === 93) {
+      effects.exit('chunkString');
+      const token = effects.exit('gfmFootnoteDefinitionLabelString');
+      identifier = normalizeIdentifier(self.sliceSerialize(token));
+      effects.enter('gfmFootnoteDefinitionLabelMarker');
+      effects.consume(code);
+      effects.exit('gfmFootnoteDefinitionLabelMarker');
+      effects.exit('gfmFootnoteDefinitionLabel');
+      return labelAfter;
+    }
+    if (!markdownLineEndingOrSpace(code)) {
+      data = true;
+    }
+    size++;
+    effects.consume(code);
+    return code === 92 ? labelEscape : labelInside;
+  }
+  function labelEscape(code) {
+    if (code === 91 || code === 92 || code === 93) {
+      effects.consume(code);
+      size++;
+      return labelInside;
+    }
+    return labelInside(code);
+  }
+  function labelAfter(code) {
+    if (code === 58) {
+      effects.enter('definitionMarker');
+      effects.consume(code);
+      effects.exit('definitionMarker');
+      if (!defined.includes(identifier)) {
+        defined.push(identifier);
+      }
+      return factorySpace(effects, whitespaceAfter, 'gfmFootnoteDefinitionWhitespace');
+    }
+    return nok(code);
+  }
+  function whitespaceAfter(code) {
+    return ok(code);
+  }
+}
+function tokenizeDefinitionContinuation(effects, ok, nok) {
+  return effects.check(blankLine, ok, effects.attempt(indent, ok, nok));
+}
+function gfmFootnoteDefinitionEnd(effects) {
+  effects.exit('gfmFootnoteDefinition');
+}
+function tokenizeIndent(effects, ok, nok) {
+  const self = this;
+  return factorySpace(effects, afterPrefix, 'gfmFootnoteDefinitionIndent', 4 + 1);
+  function afterPrefix(code) {
+    const tail = self.events[self.events.length - 1];
+    return tail && tail[1].type === 'gfmFootnoteDefinitionIndent' && tail[2].sliceSerialize(tail[1], true).length === 4 ? ok(code) : nok(code);
   }
 }
 
+function gfmStrikethrough(options) {
+  const options_ = options || {};
+  let single = options_.singleTilde;
+  const tokenizer = {
+    name: 'strikethrough',
+    tokenize: tokenizeStrikethrough,
+    resolveAll: resolveAllStrikethrough
+  };
+  if (single === null || single === undefined) {
+    single = true;
+  }
+  return {
+    text: {
+      [126]: tokenizer
+    },
+    insideSpan: {
+      null: [tokenizer]
+    },
+    attentionMarkers: {
+      null: [126]
+    }
+  };
+  function resolveAllStrikethrough(events, context) {
+    let index = -1;
+    while (++index < events.length) {
+      if (events[index][0] === 'enter' && events[index][1].type === 'strikethroughSequenceTemporary' && events[index][1]._close) {
+        let open = index;
+        while (open--) {
+          if (events[open][0] === 'exit' && events[open][1].type === 'strikethroughSequenceTemporary' && events[open][1]._open &&
+          events[index][1].end.offset - events[index][1].start.offset === events[open][1].end.offset - events[open][1].start.offset) {
+            events[index][1].type = 'strikethroughSequence';
+            events[open][1].type = 'strikethroughSequence';
+            const strikethrough = {
+              type: 'strikethrough',
+              start: Object.assign({}, events[open][1].start),
+              end: Object.assign({}, events[index][1].end)
+            };
+            const text = {
+              type: 'strikethroughText',
+              start: Object.assign({}, events[open][1].end),
+              end: Object.assign({}, events[index][1].start)
+            };
+            const nextEvents = [['enter', strikethrough, context], ['enter', events[open][1], context], ['exit', events[open][1], context], ['enter', text, context]];
+            const insideSpan = context.parser.constructs.insideSpan.null;
+            if (insideSpan) {
+              splice(nextEvents, nextEvents.length, 0, resolveAll(insideSpan, events.slice(open + 1, index), context));
+            }
+            splice(nextEvents, nextEvents.length, 0, [['exit', text, context], ['enter', events[index][1], context], ['exit', events[index][1], context], ['exit', strikethrough, context]]);
+            splice(events, open - 1, index - open + 3, nextEvents);
+            index = open + nextEvents.length - 2;
+            break;
+          }
+        }
+      }
+    }
+    index = -1;
+    while (++index < events.length) {
+      if (events[index][1].type === 'strikethroughSequenceTemporary') {
+        events[index][1].type = "data";
+      }
+    }
+    return events;
+  }
+  function tokenizeStrikethrough(effects, ok, nok) {
+    const previous = this.previous;
+    const events = this.events;
+    let size = 0;
+    return start;
+    function start(code) {
+      if (previous === 126 && events[events.length - 1][1].type !== "characterEscape") {
+        return nok(code);
+      }
+      effects.enter('strikethroughSequenceTemporary');
+      return more(code);
+    }
+    function more(code) {
+      const before = classifyCharacter(previous);
+      if (code === 126) {
+        if (size > 1) return nok(code);
+        effects.consume(code);
+        size++;
+        return more;
+      }
+      if (size < 2 && !single) return nok(code);
+      const token = effects.exit('strikethroughSequenceTemporary');
+      const after = classifyCharacter(code);
+      token._open = !after || after === 2 && Boolean(before);
+      token._close = !before || before === 2 && Boolean(after);
+      return ok(code);
+    }
+  }
+}
+
+class EditMap {
+  constructor() {
+    this.map = [];
+  }
+  add(index, remove, add) {
+    addImplementation(this, index, remove, add);
+  }
+  consume(events) {
+    this.map.sort(function (a, b) {
+      return a[0] - b[0];
+    });
+    if (this.map.length === 0) {
+      return;
+    }
+    let index = this.map.length;
+    const vecs = [];
+    while (index > 0) {
+      index -= 1;
+      vecs.push(events.slice(this.map[index][0] + this.map[index][1]), this.map[index][2]);
+      events.length = this.map[index][0];
+    }
+    vecs.push([...events]);
+    events.length = 0;
+    let slice = vecs.pop();
+    while (slice) {
+      events.push(...slice);
+      slice = vecs.pop();
+    }
+    this.map.length = 0;
+  }
+}
+function addImplementation(editMap, at, remove, add) {
+  let index = 0;
+  if (remove === 0 && add.length === 0) {
+    return;
+  }
+  while (index < editMap.map.length) {
+    if (editMap.map[index][0] === at) {
+      editMap.map[index][1] += remove;
+      editMap.map[index][2].push(...add);
+      return;
+    }
+    index += 1;
+  }
+  editMap.map.push([at, remove, add]);
+}
+
+function gfmTableAlign(events, index) {
+  let inDelimiterRow = false;
+  const align = [];
+  while (index < events.length) {
+    const event = events[index];
+    if (inDelimiterRow) {
+      if (event[0] === 'enter') {
+        if (event[1].type === 'tableContent') {
+          align.push(events[index + 1][1].type === 'tableDelimiterMarker' ? 'left' : 'none');
+        }
+      }
+      else if (event[1].type === 'tableContent') {
+        if (events[index - 1][1].type === 'tableDelimiterMarker') {
+          const alignIndex = align.length - 1;
+          align[alignIndex] = align[alignIndex] === 'left' ? 'center' : 'right';
+        }
+      }
+      else if (event[1].type === 'tableDelimiterRow') {
+        break;
+      }
+    } else if (event[0] === 'enter' && event[1].type === 'tableDelimiterRow') {
+      inDelimiterRow = true;
+    }
+    index += 1;
+  }
+  return align;
+}
+
+function gfmTable() {
+  return {
+    flow: {
+      null: {
+        name: 'table',
+        tokenize: tokenizeTable,
+        resolveAll: resolveTable
+      }
+    }
+  };
+}
+function tokenizeTable(effects, ok, nok) {
+  const self = this;
+  let size = 0;
+  let sizeB = 0;
+  let seen;
+  return start;
+  function start(code) {
+    let index = self.events.length - 1;
+    while (index > -1) {
+      const type = self.events[index][1].type;
+      if (type === "lineEnding" ||
+      type === "linePrefix") index--;else break;
+    }
+    const tail = index > -1 ? self.events[index][1].type : null;
+    const next = tail === 'tableHead' || tail === 'tableRow' ? bodyRowStart : headRowBefore;
+    if (next === bodyRowStart && self.parser.lazy[self.now().line]) {
+      return nok(code);
+    }
+    return next(code);
+  }
+  function headRowBefore(code) {
+    effects.enter('tableHead');
+    effects.enter('tableRow');
+    return headRowStart(code);
+  }
+  function headRowStart(code) {
+    if (code === 124) {
+      return headRowBreak(code);
+    }
+    seen = true;
+    sizeB += 1;
+    return headRowBreak(code);
+  }
+  function headRowBreak(code) {
+    if (code === null) {
+      return nok(code);
+    }
+    if (markdownLineEnding(code)) {
+      if (sizeB > 1) {
+        sizeB = 0;
+        self.interrupt = true;
+        effects.exit('tableRow');
+        effects.enter("lineEnding");
+        effects.consume(code);
+        effects.exit("lineEnding");
+        return headDelimiterStart;
+      }
+      return nok(code);
+    }
+    if (markdownSpace(code)) {
+      return factorySpace(effects, headRowBreak, "whitespace")(code);
+    }
+    sizeB += 1;
+    if (seen) {
+      seen = false;
+      size += 1;
+    }
+    if (code === 124) {
+      effects.enter('tableCellDivider');
+      effects.consume(code);
+      effects.exit('tableCellDivider');
+      seen = true;
+      return headRowBreak;
+    }
+    effects.enter("data");
+    return headRowData(code);
+  }
+  function headRowData(code) {
+    if (code === null || code === 124 || markdownLineEndingOrSpace(code)) {
+      effects.exit("data");
+      return headRowBreak(code);
+    }
+    effects.consume(code);
+    return code === 92 ? headRowEscape : headRowData;
+  }
+  function headRowEscape(code) {
+    if (code === 92 || code === 124) {
+      effects.consume(code);
+      return headRowData;
+    }
+    return headRowData(code);
+  }
+  function headDelimiterStart(code) {
+    self.interrupt = false;
+    if (self.parser.lazy[self.now().line]) {
+      return nok(code);
+    }
+    effects.enter('tableDelimiterRow');
+    seen = false;
+    if (markdownSpace(code)) {
+      return factorySpace(effects, headDelimiterBefore, "linePrefix", self.parser.constructs.disable.null.includes('codeIndented') ? undefined : 4)(code);
+    }
+    return headDelimiterBefore(code);
+  }
+  function headDelimiterBefore(code) {
+    if (code === 45 || code === 58) {
+      return headDelimiterValueBefore(code);
+    }
+    if (code === 124) {
+      seen = true;
+      effects.enter('tableCellDivider');
+      effects.consume(code);
+      effects.exit('tableCellDivider');
+      return headDelimiterCellBefore;
+    }
+    return headDelimiterNok(code);
+  }
+  function headDelimiterCellBefore(code) {
+    if (markdownSpace(code)) {
+      return factorySpace(effects, headDelimiterValueBefore, "whitespace")(code);
+    }
+    return headDelimiterValueBefore(code);
+  }
+  function headDelimiterValueBefore(code) {
+    if (code === 58) {
+      sizeB += 1;
+      seen = true;
+      effects.enter('tableDelimiterMarker');
+      effects.consume(code);
+      effects.exit('tableDelimiterMarker');
+      return headDelimiterLeftAlignmentAfter;
+    }
+    if (code === 45) {
+      sizeB += 1;
+      return headDelimiterLeftAlignmentAfter(code);
+    }
+    if (code === null || markdownLineEnding(code)) {
+      return headDelimiterCellAfter(code);
+    }
+    return headDelimiterNok(code);
+  }
+  function headDelimiterLeftAlignmentAfter(code) {
+    if (code === 45) {
+      effects.enter('tableDelimiterFiller');
+      return headDelimiterFiller(code);
+    }
+    return headDelimiterNok(code);
+  }
+  function headDelimiterFiller(code) {
+    if (code === 45) {
+      effects.consume(code);
+      return headDelimiterFiller;
+    }
+    if (code === 58) {
+      seen = true;
+      effects.exit('tableDelimiterFiller');
+      effects.enter('tableDelimiterMarker');
+      effects.consume(code);
+      effects.exit('tableDelimiterMarker');
+      return headDelimiterRightAlignmentAfter;
+    }
+    effects.exit('tableDelimiterFiller');
+    return headDelimiterRightAlignmentAfter(code);
+  }
+  function headDelimiterRightAlignmentAfter(code) {
+    if (markdownSpace(code)) {
+      return factorySpace(effects, headDelimiterCellAfter, "whitespace")(code);
+    }
+    return headDelimiterCellAfter(code);
+  }
+  function headDelimiterCellAfter(code) {
+    if (code === 124) {
+      return headDelimiterBefore(code);
+    }
+    if (code === null || markdownLineEnding(code)) {
+      if (!seen || size !== sizeB) {
+        return headDelimiterNok(code);
+      }
+      effects.exit('tableDelimiterRow');
+      effects.exit('tableHead');
+      return ok(code);
+    }
+    return headDelimiterNok(code);
+  }
+  function headDelimiterNok(code) {
+    return nok(code);
+  }
+  function bodyRowStart(code) {
+    effects.enter('tableRow');
+    return bodyRowBreak(code);
+  }
+  function bodyRowBreak(code) {
+    if (code === 124) {
+      effects.enter('tableCellDivider');
+      effects.consume(code);
+      effects.exit('tableCellDivider');
+      return bodyRowBreak;
+    }
+    if (code === null || markdownLineEnding(code)) {
+      effects.exit('tableRow');
+      return ok(code);
+    }
+    if (markdownSpace(code)) {
+      return factorySpace(effects, bodyRowBreak, "whitespace")(code);
+    }
+    effects.enter("data");
+    return bodyRowData(code);
+  }
+  function bodyRowData(code) {
+    if (code === null || code === 124 || markdownLineEndingOrSpace(code)) {
+      effects.exit("data");
+      return bodyRowBreak(code);
+    }
+    effects.consume(code);
+    return code === 92 ? bodyRowEscape : bodyRowData;
+  }
+  function bodyRowEscape(code) {
+    if (code === 92 || code === 124) {
+      effects.consume(code);
+      return bodyRowData;
+    }
+    return bodyRowData(code);
+  }
+}
+function resolveTable(events, context) {
+  let index = -1;
+  let inFirstCellAwaitingPipe = true;
+  let rowKind = 0;
+  let lastCell = [0, 0, 0, 0];
+  let cell = [0, 0, 0, 0];
+  let afterHeadAwaitingFirstBodyRow = false;
+  let lastTableEnd = 0;
+  let currentTable;
+  let currentBody;
+  let currentCell;
+  const map = new EditMap();
+  while (++index < events.length) {
+    const event = events[index];
+    const token = event[1];
+    if (event[0] === 'enter') {
+      if (token.type === 'tableHead') {
+        afterHeadAwaitingFirstBodyRow = false;
+        if (lastTableEnd !== 0) {
+          flushTableEnd(map, context, lastTableEnd, currentTable, currentBody);
+          currentBody = undefined;
+          lastTableEnd = 0;
+        }
+        currentTable = {
+          type: 'table',
+          start: Object.assign({}, token.start),
+          end: Object.assign({}, token.end)
+        };
+        map.add(index, 0, [['enter', currentTable, context]]);
+      } else if (token.type === 'tableRow' || token.type === 'tableDelimiterRow') {
+        inFirstCellAwaitingPipe = true;
+        currentCell = undefined;
+        lastCell = [0, 0, 0, 0];
+        cell = [0, index + 1, 0, 0];
+        if (afterHeadAwaitingFirstBodyRow) {
+          afterHeadAwaitingFirstBodyRow = false;
+          currentBody = {
+            type: 'tableBody',
+            start: Object.assign({}, token.start),
+            end: Object.assign({}, token.end)
+          };
+          map.add(index, 0, [['enter', currentBody, context]]);
+        }
+        rowKind = token.type === 'tableDelimiterRow' ? 2 : currentBody ? 3 : 1;
+      }
+      else if (rowKind && (token.type === "data" || token.type === 'tableDelimiterMarker' || token.type === 'tableDelimiterFiller')) {
+        inFirstCellAwaitingPipe = false;
+        if (cell[2] === 0) {
+          if (lastCell[1] !== 0) {
+            cell[0] = cell[1];
+            currentCell = flushCell(map, context, lastCell, rowKind, undefined, currentCell);
+            lastCell = [0, 0, 0, 0];
+          }
+          cell[2] = index;
+        }
+      } else if (token.type === 'tableCellDivider') {
+        if (inFirstCellAwaitingPipe) {
+          inFirstCellAwaitingPipe = false;
+        } else {
+          if (lastCell[1] !== 0) {
+            cell[0] = cell[1];
+            currentCell = flushCell(map, context, lastCell, rowKind, undefined, currentCell);
+          }
+          lastCell = cell;
+          cell = [lastCell[1], index, 0, 0];
+        }
+      }
+    }
+    else if (token.type === 'tableHead') {
+      afterHeadAwaitingFirstBodyRow = true;
+      lastTableEnd = index;
+    } else if (token.type === 'tableRow' || token.type === 'tableDelimiterRow') {
+      lastTableEnd = index;
+      if (lastCell[1] !== 0) {
+        cell[0] = cell[1];
+        currentCell = flushCell(map, context, lastCell, rowKind, index, currentCell);
+      } else if (cell[1] !== 0) {
+        currentCell = flushCell(map, context, cell, rowKind, index, currentCell);
+      }
+      rowKind = 0;
+    } else if (rowKind && (token.type === "data" || token.type === 'tableDelimiterMarker' || token.type === 'tableDelimiterFiller')) {
+      cell[3] = index;
+    }
+  }
+  if (lastTableEnd !== 0) {
+    flushTableEnd(map, context, lastTableEnd, currentTable, currentBody);
+  }
+  map.consume(context.events);
+  index = -1;
+  while (++index < context.events.length) {
+    const event = context.events[index];
+    if (event[0] === 'enter' && event[1].type === 'table') {
+      event[1]._align = gfmTableAlign(context.events, index);
+    }
+  }
+  return events;
+}
+function flushCell(map, context, range, rowKind, rowEnd, previousCell) {
+  const groupName = rowKind === 1 ? 'tableHeader' : rowKind === 2 ? 'tableDelimiter' : 'tableData';
+  const valueName = 'tableContent';
+  if (range[0] !== 0) {
+    previousCell.end = Object.assign({}, getPoint(context.events, range[0]));
+    map.add(range[0], 0, [['exit', previousCell, context]]);
+  }
+  const now = getPoint(context.events, range[1]);
+  previousCell = {
+    type: groupName,
+    start: Object.assign({}, now),
+    end: Object.assign({}, now)
+  };
+  map.add(range[1], 0, [['enter', previousCell, context]]);
+  if (range[2] !== 0) {
+    const relatedStart = getPoint(context.events, range[2]);
+    const relatedEnd = getPoint(context.events, range[3]);
+    const valueToken = {
+      type: valueName,
+      start: Object.assign({}, relatedStart),
+      end: Object.assign({}, relatedEnd)
+    };
+    map.add(range[2], 0, [['enter', valueToken, context]]);
+    if (rowKind !== 2) {
+      const start = context.events[range[2]];
+      const end = context.events[range[3]];
+      start[1].end = Object.assign({}, end[1].end);
+      start[1].type = "chunkText";
+      start[1].contentType = "text";
+      if (range[3] > range[2] + 1) {
+        const a = range[2] + 1;
+        const b = range[3] - range[2] - 1;
+        map.add(a, b, []);
+      }
+    }
+    map.add(range[3] + 1, 0, [['exit', valueToken, context]]);
+  }
+  if (rowEnd !== undefined) {
+    previousCell.end = Object.assign({}, getPoint(context.events, rowEnd));
+    map.add(rowEnd, 0, [['exit', previousCell, context]]);
+    previousCell = undefined;
+  }
+  return previousCell;
+}
+function flushTableEnd(map, context, index, table, tableBody) {
+  const exits = [];
+  const related = getPoint(context.events, index);
+  if (tableBody) {
+    tableBody.end = Object.assign({}, related);
+    exits.push(['exit', tableBody, context]);
+  }
+  table.end = Object.assign({}, related);
+  exits.push(['exit', table, context]);
+  map.add(index + 1, 0, exits);
+}
+function getPoint(events, index) {
+  const event = events[index];
+  const side = event[0] === 'enter' ? 'start' : 'end';
+  return event[1][side];
+}
+
+const tasklistCheck = {
+  name: 'tasklistCheck',
+  tokenize: tokenizeTasklistCheck
+};
+function gfmTaskListItem() {
+  return {
+    text: {
+      [91]: tasklistCheck
+    }
+  };
+}
+function tokenizeTasklistCheck(effects, ok, nok) {
+  const self = this;
+  return open;
+  function open(code) {
+    if (
+    self.previous !== null ||
+    !self._gfmTasklistFirstContentOfListItem) {
+      return nok(code);
+    }
+    effects.enter('taskListCheck');
+    effects.enter('taskListCheckMarker');
+    effects.consume(code);
+    effects.exit('taskListCheckMarker');
+    return inside;
+  }
+  function inside(code) {
+    if (markdownLineEndingOrSpace(code)) {
+      effects.enter('taskListCheckValueUnchecked');
+      effects.consume(code);
+      effects.exit('taskListCheckValueUnchecked');
+      return close;
+    }
+    if (code === 88 || code === 120) {
+      effects.enter('taskListCheckValueChecked');
+      effects.consume(code);
+      effects.exit('taskListCheckValueChecked');
+      return close;
+    }
+    return nok(code);
+  }
+  function close(code) {
+    if (code === 93) {
+      effects.enter('taskListCheckMarker');
+      effects.consume(code);
+      effects.exit('taskListCheckMarker');
+      effects.exit('taskListCheck');
+      return after;
+    }
+    return nok(code);
+  }
+  function after(code) {
+    if (markdownLineEnding(code)) {
+      return ok(code);
+    }
+    if (markdownSpace(code)) {
+      return effects.check({
+        tokenize: spaceThenNonSpace
+      }, ok, nok)(code);
+    }
+    return nok(code);
+  }
+}
+function spaceThenNonSpace(effects, ok, nok) {
+  return factorySpace(effects, after, "whitespace");
+  function after(code) {
+    return code === null ? nok(code) : ok(code);
+  }
+}
+
+function gfm(options) {
+  return combineExtensions([
+    gfmAutolinkLiteral(),
+    gfmFootnote(),
+    gfmStrikethrough(options),
+    gfmTable(),
+    gfmTaskListItem()
+  ])
+}
+
+const emptyOptions$1 = {};
+function remarkGfm(options) {
+  const self =  (this);
+  const settings = options || emptyOptions$1;
+  const data = self.data();
+  const micromarkExtensions =
+    data.micromarkExtensions || (data.micromarkExtensions = []);
+  const fromMarkdownExtensions =
+    data.fromMarkdownExtensions || (data.fromMarkdownExtensions = []);
+  const toMarkdownExtensions =
+    data.toMarkdownExtensions || (data.toMarkdownExtensions = []);
+  micromarkExtensions.push(gfm(settings));
+  fromMarkdownExtensions.push(gfmFromMarkdown());
+  toMarkdownExtensions.push(gfmToMarkdown(settings));
+}
+
+const commentExpression = /\s*([a-zA-Z\d-]+)(\s+([\s\S]*))?\s*/;
+const esCommentExpression = new RegExp(
+  '(\\s*\\/\\*' + commentExpression.source + '\\*\\/\\s*)'
+);
+const markerExpression = new RegExp(
+  '(\\s*<!--' + commentExpression.source + '-->\\s*)'
+);
+function commentMarker(value) {
+  if (
+    isNode(value) &&
+    (value.type === 'html' ||
+      value.type === 'mdxFlowExpression' ||
+      value.type === 'mdxTextExpression')
+  ) {
+    const match = value.value.match(
+      value.type === 'html' ? markerExpression : esCommentExpression
+    );
+    if (match && match[0].length === value.value.length) {
+      const parameters = parseParameters(match[3] || '');
+      if (parameters) {
+        return {
+          name: match[2],
+          attributes: (match[4] || '').trim(),
+          parameters,
+          node: value
+        }
+      }
+    }
+  }
+}
+function parseParameters(value) {
+  const parameters = {};
+  return value
+    .replace(
+      /\s+([-\w]+)(?:=(?:"((?:\\[\s\S]|[^"])*)"|'((?:\\[\s\S]|[^'])*)'|((?:\\[\s\S]|[^"'\s])+)))?/gi,
+      replacer
+    )
+    .replace(/\s+/g, '')
+    ? undefined
+    : parameters
+  function replacer(_, $1, $2, $3, $4) {
+    let value = $2 === undefined ? ($3 === undefined ? $4 : $3) : $2;
+    const number = Number(value);
+    if (value === 'true' || value === undefined) {
+      value = true;
+    } else if (value === 'false') {
+      value = false;
+    } else if (value.trim() && !Number.isNaN(number)) {
+      value = number;
+    }
+    parameters[$1] = value;
+    return ''
+  }
+}
+function isNode(value) {
+  return Boolean(value && typeof value === 'object' && 'type' in value)
+}
+
+function parse$1(value) {
+  const input = String(value || '').trim();
+  return input ? input.split(/[ \t\n\r\f]+/g) : []
+}
+
+const search = /\r?\n|\r/g;
 function location(file) {
   const value = String(file);
   const indices = [];
-  const search = /\r?\n|\r/g;
+  search.lastIndex = 0;
   while (search.test(value)) {
     indices.push(search.lastIndex);
   }
@@ -11798,7 +11333,6 @@ function location(file) {
         }
       }
     }
-    return {line: undefined, column: undefined, offset: undefined}
   }
   function toOffset(point) {
     const line = point && point.line;
@@ -11815,281 +11349,181 @@ function location(file) {
         return offset
       }
     }
-    return -1
   }
 }
 
-function color$1(d) {
-  return '\u001B[33m' + d + '\u001B[39m'
-}
-
-const CONTINUE = true;
-const SKIP = 'skip';
-const EXIT = false;
-const visitParents =
-  (
-    function (tree, test, visitor, reverse) {
-      if (typeof test === 'function' && typeof visitor !== 'function') {
-        reverse = visitor;
-        visitor = test;
-        test = null;
-      }
-      var is = convert(test);
-      var step = reverse ? -1 : 1;
-      factory(tree, null, [])();
-      function factory(node, index, parents) {
-        var value = typeof node === 'object' && node !== null ? node : {};
-        var name;
-        if (typeof value.type === 'string') {
-          name =
-            typeof value.tagName === 'string'
-              ? value.tagName
-              : typeof value.name === 'string'
-              ? value.name
-              : undefined;
-          Object.defineProperty(visit, 'name', {
-            value:
-              'node (' +
-              color$1(value.type + (name ? '<' + name + '>' : '')) +
-              ')'
-          });
-        }
-        return visit
-        function visit() {
-          var result = [];
-          var subresult;
-          var offset;
-          var grandparents;
-          if (!test || is(node, index, parents[parents.length - 1] || null)) {
-            result = toResult(visitor(node, parents));
-            if (result[0] === EXIT) {
-              return result
-            }
-          }
-          if (node.children && result[0] !== SKIP) {
-            offset = (reverse ? node.children.length : -1) + step;
-            grandparents = parents.concat(node);
-            while (offset > -1 && offset < node.children.length) {
-              subresult = factory(node.children[offset], offset, grandparents)();
-              if (subresult[0] === EXIT) {
-                return subresult
-              }
-              offset =
-                typeof subresult[1] === 'number' ? subresult[1] : offset + step;
-            }
-          }
-          return result
-        }
-      }
+const own = {}.hasOwnProperty;
+function messageControl(tree, options) {
+  if (!options || typeof options !== 'object') {
+    throw new Error('Expected `options`')
+  }
+  const {file, marker, name, test} = options;
+  let {enable, disable, known, reset, source} = options;
+  if (!enable) enable = [];
+  if (!disable) disable = [];
+  if (!file) {
+    throw new Error('Expected `file` in `options`')
+  }
+  if (!marker) {
+    throw new Error('Expected `marker` in `options`')
+  }
+  if (!name) {
+    throw new Error('Expected `name` in `options`')
+  }
+  const sources = typeof source === 'string' ? [source] : source || [name];
+  const toOffset = location(file).toOffset;
+  const initial = !reset;
+  const gaps = detectGaps(tree);
+  const scope = {};
+  const globals = [];
+  visit(tree, test, visitor);
+  file.messages = file.messages.filter(function (m) {
+    return filter(m)
+  });
+  function visitor(node, position, parent) {
+    const point = node.position && node.position.start;
+    const mark = marker(node);
+    if (!point || !mark || mark.name !== name) {
+      return
     }
-  );
-function toResult(value) {
-  if (Array.isArray(value)) {
-    return value
-  }
-  if (typeof value === 'number') {
-    return [CONTINUE, value]
-  }
-  return [value]
-}
-
-const visit =
-  (
-    function (tree, test, visitor, reverse) {
-      if (typeof test === 'function' && typeof visitor !== 'function') {
-        reverse = visitor;
-        visitor = test;
-        test = null;
-      }
-      visitParents(tree, test, overload, reverse);
-      function overload(node, parents) {
-        var parent = parents[parents.length - 1];
-        return visitor(
-          node,
-          parent ? parent.children.indexOf(node) : null,
-          parent
-        )
-      }
+    const ruleIds = parse$1(mark.attributes);
+    const verb = ruleIds.shift();
+    const fn =
+      verb === 'enable'
+        ? doEnable
+        : verb === 'disable'
+        ? doDisable
+        : verb === 'ignore'
+        ? doIgnore
+        : undefined;
+    if (!fn) {
+      file.fail(
+        'Unknown keyword `' +
+          verb +
+          '`: expected ' +
+          "`'enable'`, `'disable'`, or `'ignore'`",
+        node
+      );
     }
-  );
-
-const own$2 = {}.hasOwnProperty;
-function messageControl(options) {
-  if (!options || typeof options !== 'object' || !options.name) {
-    throw new Error(
-      'Expected `name` in `options`, got `' + (options || {}).name + '`'
-    )
-  }
-  if (!options.marker) {
-    throw new Error(
-      'Expected `marker` in `options`, got `' + options.marker + '`'
-    )
-  }
-  const enable = 'enable' in options && options.enable ? options.enable : [];
-  const disable = 'disable' in options && options.disable ? options.disable : [];
-  let reset = options.reset;
-  const sources =
-    typeof options.source === 'string'
-      ? [options.source]
-      : options.source || [options.name];
-  return transformer
-  function transformer(tree, file) {
-    const toOffset = location(file).toOffset;
-    const initial = !reset;
-    const gaps = detectGaps(tree, file);
-    const scope = {};
-    const globals = [];
-    visit(tree, options.test, visitor);
-    file.messages = file.messages.filter((m) => filter(m));
-    function visitor(node, position, parent) {
-      const mark = options.marker(node);
-      if (!mark || mark.name !== options.name) {
-        return
-      }
-      const ruleIds = mark.attributes.split(/\s/g);
-      const point = mark.node.position && mark.node.position.start;
-      const next =
-        (parent && position !== null && parent.children[position + 1]) ||
-        undefined;
-      const tail = (next && next.position && next.position.end) || undefined;
+    const next =
+      (parent && position !== undefined && parent.children[position + 1]) ||
+      undefined;
+    const tail = next && next.position && next.position.end;
+    if (ruleIds.length === 0) {
+      fn(point, undefined, tail);
+    } else {
       let index = -1;
-      const verb = ruleIds.shift();
-      if (verb !== 'enable' && verb !== 'disable' && verb !== 'ignore') {
-        file.fail(
-          'Unknown keyword `' +
-            verb +
-            '`: expected ' +
-            "`'enable'`, `'disable'`, or `'ignore'`",
-          mark.node
-        );
-      }
-      if (ruleIds.length > 0) {
-        while (++index < ruleIds.length) {
-          const ruleId = ruleIds[index];
-          if (isKnown(ruleId, verb, mark.node)) {
-            toggle(point, verb === 'enable', ruleId);
-            if (verb === 'ignore') {
-              toggle(tail, true, ruleId);
-            }
-          }
-        }
-      } else if (verb === 'ignore') {
-        toggle(point, false);
-        toggle(tail, true);
-      } else {
-        toggle(point, verb === 'enable');
-        reset = verb !== 'enable';
-      }
-    }
-    function filter(message) {
-      let gapIndex = gaps.length;
-      if (!message.source || !sources.includes(message.source)) {
-        return true
-      }
-      if (!message.line) {
-        message.line = 1;
-      }
-      if (!message.column) {
-        message.column = 1;
-      }
-      const offset = toOffset(message);
-      while (gapIndex--) {
-        if (gaps[gapIndex][0] <= offset && gaps[gapIndex][1] > offset) {
-          return false
+      while (++index < ruleIds.length) {
+        const ruleId = ruleIds[index];
+        if (isKnown(ruleId, verb, node)) {
+          fn(point, ruleId, tail);
         }
       }
-      return (
-        (!message.ruleId ||
-          check(message, scope[message.ruleId], message.ruleId)) &&
-        check(message, globals)
-      )
-    }
-    function isKnown(ruleId, verb, node) {
-      const result = options.known ? options.known.includes(ruleId) : true;
-      if (!result) {
-        file.message(
-          'Unknown rule: cannot ' + verb + " `'" + ruleId + "'`",
-          node
-        );
-      }
-      return result
-    }
-    function getState(ruleId) {
-      const ranges = ruleId ? scope[ruleId] : globals;
-      if (ranges && ranges.length > 0) {
-        return ranges[ranges.length - 1].state
-      }
-      if (!ruleId) {
-        return !reset
-      }
-      return reset ? enable.includes(ruleId) : !disable.includes(ruleId)
-    }
-    function toggle(point, state, ruleId) {
-      let markers = ruleId ? scope[ruleId] : globals;
-      if (!markers) {
-        markers = [];
-        scope[String(ruleId)] = markers;
-      }
-      const previousState = getState(ruleId);
-      if (state !== previousState) {
-        markers.push({state, point});
-      }
-      if (!ruleId) {
-        for (ruleId in scope) {
-          if (own$2.call(scope, ruleId)) {
-            toggle(point, state, ruleId);
-          }
-        }
-      }
-    }
-    function check(message, ranges, ruleId) {
-      if (ranges && ranges.length > 0) {
-        let index = ranges.length;
-        while (index--) {
-          const range = ranges[index];
-          if (
-            message.line &&
-            message.column &&
-            range.point &&
-            range.point.line &&
-            range.point.column &&
-            (range.point.line < message.line ||
-              (range.point.line === message.line &&
-                range.point.column <= message.column))
-          ) {
-            return range.state === true
-          }
-        }
-      }
-      if (!ruleId) {
-        return Boolean(initial || reset)
-      }
-      return reset ? enable.includes(ruleId) : !disable.includes(ruleId)
     }
   }
+  function doIgnore(point, ruleId, tail) {
+    if (tail) {
+      toggle(point, false, ruleId);
+      toggle(tail, true, ruleId);
+    }
+  }
+  function doDisable(point, ruleId) {
+    toggle(point, false, ruleId);
+    if (!ruleId) reset = true;
+  }
+  function doEnable(point, ruleId) {
+    toggle(point, true, ruleId);
+    if (!ruleId) reset = false;
+  }
+  function filter(message) {
+    let gapIndex = gaps.length;
+    if (!message.source || !sources.includes(message.source)) {
+      return true
+    }
+    if (!message.line) message.line = 1;
+    if (!message.column) message.column = 1;
+    const offset = toOffset(message);
+    while (gapIndex--) {
+      if (gaps[gapIndex][0] <= offset && gaps[gapIndex][1] > offset) {
+        return false
+      }
+    }
+    return (
+      (!message.ruleId || check(message, scope[message.ruleId], true)) &&
+      check(message, globals, false)
+    )
+  }
+  function isKnown(ruleId, verb, node) {
+    const result = known ? known.includes(ruleId) : true;
+    if (!result) {
+      file.message('Cannot ' + verb + " `'" + ruleId + "'`, it’s not known", {
+        ancestors: [node],
+        place: node.position,
+        ruleId: 'known',
+        source: 'unified-message-control'
+      });
+    }
+    return result
+  }
+  function getState(ruleId) {
+    const ranges = ruleId ? scope[ruleId] : globals;
+    if (ranges && ranges.length > 0) {
+      return ranges[ranges.length - 1].state
+    }
+    return ruleId
+      ? reset
+        ? enable.includes(ruleId)
+        : !disable.includes(ruleId)
+      : !reset
+  }
+  function toggle(point, state, ruleId) {
+    const markers = ruleId ? scope[ruleId] || (scope[ruleId] = []) : globals;
+    const current = getState(ruleId);
+    if (current !== state) {
+      markers.push({state, point});
+    }
+    if (!ruleId) {
+      for (ruleId in scope) {
+        if (own.call(scope, ruleId)) {
+          toggle(point, state, ruleId);
+        }
+      }
+    }
+  }
+  function check(message, marks, local) {
+    if (message.line && message.column && marks && marks.length > 0) {
+      let index = marks.length;
+      while (index--) {
+        const mark = marks[index];
+        if (
+          mark.point &&
+          (mark.point.line < message.line ||
+            (mark.point.line === message.line &&
+              mark.point.column <= message.column))
+        ) {
+          return mark.state === true
+        }
+      }
+    }
+    if (local) {
+      ok$1(message.ruleId);
+      return reset
+        ? enable.includes(message.ruleId)
+        : !disable.includes(message.ruleId)
+    }
+    return Boolean(initial || reset)
+  }
 }
-function detectGaps(tree, file) {
-  const children = tree.children || [];
-  const lastNode = children[children.length - 1];
-  const gaps = [];
+function detectGaps(tree) {
+  const end =
+    tree && tree.position && tree.position.end && tree.position.end.offset;
   let offset = 0;
-  let gap;
+  let gap = false;
+  const gaps = [];
   visit(tree, one);
-  if (
-    lastNode &&
-    lastNode.position &&
-    lastNode.position.end &&
-    offset === lastNode.position.end.offset &&
-    file.toString().slice(offset).trim() !== ''
-  ) {
+  if (typeof end === 'number' && offset !== end) {
     update();
-    update(
-      tree &&
-        tree.position &&
-        tree.position.end &&
-        tree.position.end.offset &&
-        tree.position.end.offset - 1
-    );
+    update(end);
   }
   return gaps
   function one(node) {
@@ -12104,93 +11538,23 @@ function detectGaps(tree, file) {
     } else if (offset < latest) {
       if (gap) {
         gaps.push([offset, latest]);
-        gap = undefined;
+        gap = false;
       }
       offset = latest;
     }
   }
 }
 
-const commentExpression = /\s*([a-zA-Z\d-]+)(\s+([\s\S]*))?\s*/;
-const esCommentExpression = new RegExp(
-  '(\\s*\\/\\*' + commentExpression.source + '\\*\\/\\s*)'
-);
-const markerExpression = new RegExp(
-  '(\\s*<!--' + commentExpression.source + '-->\\s*)'
-);
-function commentMarker(value) {
-  if (
-    isNode(value) &&
-    (value.type === 'html' ||
-      value.type === 'comment' ||
-      value.type === 'mdxFlowExpression' ||
-      value.type === 'mdxTextExpression')
-  ) {
-    let offset = 2;
-    let match;
-    if (value.type === 'comment') {
-      match = value.value.match(commentExpression);
-      offset = 1;
-    } else if (value.type === 'html') {
-      match = value.value.match(markerExpression);
-    } else if (
-      value.type === 'mdxFlowExpression' ||
-      value.type === 'mdxTextExpression'
-    ) {
-      match = value.value.match(esCommentExpression);
-    }
-    if (match && match[0].length === value.value.length) {
-      const parameters = parseParameters(match[offset + 1] || '');
-      if (parameters) {
-        return {
-          name: match[offset],
-          attributes: (match[offset + 2] || '').trim(),
-          parameters,
-          node: value
-        }
-      }
-    }
-  }
-  return null
-}
-function parseParameters(value) {
-  const parameters = {};
-  return value
-    .replace(
-      /\s+([-\w]+)(?:=(?:"((?:\\[\s\S]|[^"])*)"|'((?:\\[\s\S]|[^'])*)'|((?:\\[\s\S]|[^"'\s])+)))?/gi,
-      replacer
-    )
-    .replace(/\s+/g, '')
-    ? null
-    : parameters
-  function replacer(_, $1, $2, $3, $4) {
-    let value = $2 === undefined ? ($3 === undefined ? $4 : $3) : $2;
-    const number = Number(value);
-    if (value === 'true' || value === undefined) {
-      value = true;
-    } else if (value === 'false') {
-      value = false;
-    } else if (value.trim() && !Number.isNaN(number)) {
-      value = number;
-    }
-    parameters[$1] = value;
-    return ''
-  }
-}
-function isNode(value) {
-  return Boolean(value && typeof value === 'object' && 'type' in value)
-}
-
 const test = [
-  'html',
   'comment',
+  'html',
   'mdxFlowExpression',
   'mdxTextExpression'
 ];
 function remarkMessageControl(options) {
-  return messageControl(
-    Object.assign({marker: commentMarker, test}, options)
-  )
+  return function (tree, file) {
+    messageControl(tree, {...options, file, marker: commentMarker, test});
+  }
 }
 
 function remarkLint() {
@@ -12200,7 +11564,7 @@ function lintMessageControl() {
   return remarkMessageControl({name: 'lint', source: 'remark-lint'})
 }
 
-function lintRule(meta, rule) {
+function lintRule$1(meta, rule) {
   const id = typeof meta === 'string' ? meta : meta.origin;
   const url = typeof meta === 'string' ? undefined : meta.url;
   const parts = id.split(':');
@@ -12209,12 +11573,12 @@ function lintRule(meta, rule) {
   Object.defineProperty(plugin, 'name', {value: id});
   return plugin
   function plugin(config) {
-    const [severity, options] = coerce$1(ruleId, config);
-    if (!severity) return
+    const [severity, options] = coerce$2(ruleId, config);
     const fatal = severity === 2;
-    return (tree, file, next) => {
+    if (!severity) return
+    return function (tree, file, next) {
       let index = file.messages.length - 1;
-      wrap(rule, (error) => {
+      wrap(rule, function (error) {
         const messages = file.messages;
         if (error && !messages.includes(error)) {
           try {
@@ -12222,34 +11586,38 @@ function lintRule(meta, rule) {
           } catch {}
         }
         while (++index < messages.length) {
-          Object.assign(messages[index], {ruleId, source, fatal, url});
+          Object.assign(messages[index], {fatal, ruleId, source, url});
         }
         next();
       })(tree, file, options);
     }
   }
 }
-function coerce$1(name, config) {
-  if (!Array.isArray(config)) return [1, config]
+function coerce$2(name, config) {
+  if (!Array.isArray(config)) {
+    return [1, config]
+  }
   const [severity, ...options] = config;
   switch (severity) {
     case false:
-    case 'off':
-    case 0: {
+    case 0:
+    case 'off': {
       return [0, ...options]
     }
     case true:
+    case 1:
     case 'on':
-    case 'warn':
-    case 1: {
+    case 'warn': {
       return [1, ...options]
     }
-    case 'error':
-    case 2: {
+    case 2:
+    case 'error': {
       return [2, ...options]
     }
     default: {
-      if (typeof severity !== 'number') return [1, config]
+      if (typeof severity !== 'number') {
+        return [1, config]
+      }
       throw new Error(
         'Incorrect severity `' +
           severity +
@@ -12263,35 +11631,53 @@ function coerce$1(name, config) {
 }
 
 /**
+ * remark-lint rule to warn when a final line ending is missing.
+ *
+ * ## What is this?
+ *
+ * This package checks the final line ending.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that fenced code markers are consistent.
+ * You can use this package to check final line endings.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintFinalNewline)`
+ *
+ * Warn when a final line ending is missing.
+ *
+ * ###### Parameters
+ *
  * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
  * Turn this rule on.
- * See [StackExchange](https://unix.stackexchange.com/questions/18743) for more
- * info.
+ * See [StackExchange][] for more info.
  *
  * ## Fix
  *
  * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
  * always adds final line endings.
  *
- * ## Example
+ * [api-remark-lint-final-newline]: #unifieduseremarklintfinalnewline
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
+ * [stackexchange]: https://unix.stackexchange.com/questions/18743
+ *
+ * ## Examples
  *
  * ##### `ok.md`
  *
  * ###### In
  *
- * > 👉 **Note**: `␊` represents a line feed (`\n`).
- *
  * ```markdown
- * Alpha␊
+ * Mercury␊
  * ```
  *
  * ###### Out
@@ -12302,45 +11688,177 @@ function coerce$1(name, config) {
  *
  * ###### In
  *
- * > 👉 **Note**: `␀` represents the end of the file.
- *
  * ```markdown
- * Bravo␀
+ * Mercury␀
  * ```
  *
  * ###### Out
  *
  * ```text
- * 1:1: Missing newline character at end of file
+ * 1:8: Unexpected missing final newline character, expected line feed (`\n`) at end of file
  * ```
  *
  * @module final-newline
- * @summary
- *   remark-lint rule to warn when files don’t end in a newline.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
  */
-const remarkLintFinalNewline = lintRule(
+const remarkLintFinalNewline = lintRule$1(
   {
     origin: 'remark-lint:final-newline',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-final-newline#readme'
   },
-  (_, file) => {
+  function (_, file) {
     const value = String(file);
+    const end = location(file).toPoint(value.length);
     const last = value.length - 1;
-    if (last > -1 && value.charAt(last) !== '\n') {
-      file.message('Missing newline character at end of file');
+    if (
+      last !== -1 &&
+      value.charAt(last) !== '\n'
+    ) {
+      file.message(
+        'Unexpected missing final newline character, expected line feed (`\\n`) at end of file',
+        end
+      );
     }
   }
 );
-var remarkLintFinalNewline$1 = remarkLintFinalNewline;
+
+const pointEnd = point('end');
+const pointStart = point('start');
+function point(type) {
+  return point
+  function point(node) {
+    const point = (node && node.position && node.position[type]) || {};
+    if (
+      typeof point.line === 'number' &&
+      point.line > 0 &&
+      typeof point.column === 'number' &&
+      point.column > 0
+    ) {
+      return {
+        line: point.line,
+        column: point.column,
+        offset:
+          typeof point.offset === 'number' && point.offset > -1
+            ? point.offset
+            : undefined
+      }
+    }
+  }
+}
+function position(node) {
+  const start = pointStart(node);
+  const end = pointEnd(node);
+  if (start && end) {
+    return {start, end}
+  }
+}
+
+/**
+ * remark-lint rule to warn when more spaces are used than needed
+ * for hard breaks.
+ *
+ * ## What is this?
+ *
+ * This package checks the whitespace of hard breaks.
+ *
+ * ## When should I use this?
+ *
+ * You can use this package to check that the number of spaces in hard breaks
+ * are consistent.
+ *
+ * ## API
+ *
+ * ### `unified().use(remarkLintHardBreakSpaces)`
+ *
+ * Warn when more spaces are used than needed for hard breaks.
+ *
+ * ###### Parameters
+ *
+ * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ## Recommendation
+ *
+ * Less than two spaces do not create a hard breaks and more than two spaces
+ * have no effect.
+ * Due to this, it’s recommended to turn this rule on.
+ *
+ * [api-remark-lint-hard-break-spaces]: #unifieduseremarklinthardbreakspaces
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
+ *
+ * @module hard-break-spaces
+ * @author Titus Wormer
+ * @copyright 2015 Titus Wormer
+ * @license MIT
+ * @example
+ *   {"name": "ok.md"}
+ *
+ *   **Mercury** is the first planet from the Sun␠␠
+ *   and the smallest in the Solar System.
+ *
+ * @example
+ *   {"label": "input", "name": "not-ok.md"}
+ *
+ *   **Mercury** is the first planet from the Sun␠␠␠
+ *   and the smallest in the Solar System.
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   1:45-2:1: Unexpected `3` spaces for hard break, expected `2` spaces
+ *
+ * @example
+ *   {"gfm": true, "label": "input", "name": "containers.md"}
+ *
+ *   [^mercury]:
+ *       > * > * **Mercury** is the first planet from the Sun␠␠␠
+ *       >   >   and the smallest in the Solar System.
+ * @example
+ *   {"gfm": true, "label": "output", "name": "containers.md"}
+ *
+ *   2:57-3:1: Unexpected `3` spaces for hard break, expected `2` spaces
+ */
+const remarkLintHardBreakSpaces = lintRule$1(
+  {
+    origin: 'remark-lint:hard-break-spaces',
+    url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-hard-break-spaces#readme'
+  },
+  function (tree, file) {
+    const value = String(file);
+    visit(tree, 'break', function (node) {
+      const end = pointEnd(node);
+      const start = pointStart(node);
+      if (
+        end &&
+        start &&
+        typeof end.offset === 'number' &&
+        typeof start.offset === 'number'
+      ) {
+        const slice = value.slice(start.offset, end.offset);
+        let actual = 0;
+        while (slice.charCodeAt(actual) === 32) actual++;
+        if (actual > 2) {
+          file.message(
+            'Unexpected `' +
+              actual +
+              '` spaces for hard break, expected `2` spaces',
+            node
+          );
+        }
+      }
+    });
+  }
+);
 
 function commonjsRequire(path) {
 	throw new Error('Could not dynamically require "' + path + '". Please configure the dynamicRequireTargets or/and ignoreDynamicRequires option of @rollup/plugin-commonjs appropriately for this require call to work.');
 }
 
-var pluralize = {exports: {}};
+var pluralize$1 = {exports: {}};
 
 (function (module, exports) {
 	(function (root, pluralize) {
@@ -12665,96 +12183,500 @@ var pluralize = {exports: {}};
 	  ].forEach(pluralize.addUncountableRule);
 	  return pluralize;
 	});
-} (pluralize));
-var pluralizeExports = pluralize.exports;
-var plural = getDefaultExportFromCjs(pluralizeExports);
+} (pluralize$1));
+var pluralizeExports = pluralize$1.exports;
+var pluralize = getDefaultExportFromCjs(pluralizeExports);
 
 /**
+ * remark-lint rule to warn when list item markers are indented.
+ *
+ * ## What is this?
+ *
+ * This package checks indentation before list item markers.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that list items are not indented.
+ * You can use this package to check that the style of list items is
+ * consistent.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintListItemBulletIndent)`
+ *
+ * Warn when list item markers are indented.
+ *
+ * ###### Parameters
+ *
  * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
- * There is no specific handling of indented list items (or anything else) in
- * markdown.
+ * There is no specific handling of indented list items in markdown.
  * While it is possible to use an indent to align ordered lists on their marker:
  *
  * ```markdown
- *   1. One
- *  10. Ten
- * 100. Hundred
+ *   1. Mercury
+ *  10. Venus
+ * 100. Earth
  * ```
  *
- * …such a style is uncommon and a bit hard to maintain: adding a 10th item
- * means 9 other items have to change (more arduous, while unlikely, would be
+ * …such a style is uncommon and hard to maintain as adding a 10th item
+ * means 9 other items have to change (more arduous while unlikely would be
  * the 100th item).
- * Hence, it’s recommended to not indent items and to turn this rule on.
+ * So it is recommended to not indent items and to turn this rule on.
  *
  * ## Fix
  *
- * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
- * formats all items without indent.
+ * [`remark-stringify`][github-remark-stringify] formats all items without
+ * indent.
+ *
+ * [api-remark-lint-list-item-bullet-indent]: #unifieduseremarklintlistitembulletindent
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module list-item-bullet-indent
- * @summary
- *   remark-lint rule to warn when list items are indented.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
  * @example
  *   {"name": "ok.md"}
  *
- *   Paragraph.
+ *   Mercury.
  *
- *   * List item
- *   * List item
- *
- * @example
- *   {"name": "not-ok.md", "label": "input"}
- *
- *   Paragraph.
- *
- *   ·* List item
- *   ·* List item
+ *   * Venus.
+ *   * Earth.
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"label": "input", "name": "not-ok.md"}
  *
- *   3:2: Incorrect indentation before bullet: remove 1 space
- *   4:2: Incorrect indentation before bullet: remove 1 space
+ *   Mercury.
+ *
+ *   ␠* Venus.
+ *   ␠* Earth.
+ *
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   3:2: Unexpected `1` space before list item, expected `0` spaces, remove them
+ *   4:2: Unexpected `1` space before list item, expected `0` spaces, remove them
  */
-const remarkLintListItemBulletIndent = lintRule(
+const remarkLintListItemBulletIndent = lintRule$1(
   {
     origin: 'remark-lint:list-item-bullet-indent',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-list-item-bullet-indent#readme'
   },
-  (tree, file) => {
-    visit$1(tree, 'list', (list, _, grandparent) => {
-      let index = -1;
-      while (++index < list.children.length) {
-        const item = list.children[index];
+  function (tree, file) {
+    const treeStart = pointStart(tree);
+    if (!tree || tree.type !== 'root' || !treeStart) return
+    for (const child of tree.children) {
+      if (child.type !== 'list') continue
+      const list = child;
+      for (const item of list.children) {
+        const place = pointStart(item);
+        if (!place) continue
+        const actual = place.column - treeStart.column;
+        if (actual) {
+          file.message(
+            'Unexpected `' +
+              actual +
+              '` ' +
+              pluralize('space', actual) +
+              ' before list item, expected `0` spaces, remove them',
+            {ancestors: [tree, list, item], place}
+          );
+        }
+      }
+    }
+  }
+);
+
+/**
+ * remark-lint rule to warn when the whitespace after list item markers violate
+ * a given style.
+ *
+ * ## What is this?
+ *
+ * This package checks the style of whitespace after list item markers.
+ *
+ * ## When should I use this?
+ *
+ * You can use this package to check that the style of whitespace after list
+ * item markers and before content is consistent.
+ *
+ * ## API
+ *
+ * ### `unified().use(remarkLintListItemIndent[, options])`
+ *
+ * Warn when the whitespace after list item markers violate a given style.
+ *
+ * ###### Parameters
+ *
+ * * `options` ([`Options`][api-options], default: `'one'`)
+ *   — preferred style
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ### `Options`
+ *
+ * Configuration (TypeScript type).
+ *
+ * * `'mixed'`
+ *   — prefer `'one'` for tight lists and `'tab'` for loose lists
+ * * `'one'`
+ *   — prefer the size of the bullet and a single space
+ * * `'tab'`
+ *   — prefer the size of the bullet and a single space to the next tab stop
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Options = 'mixed' | 'one' | 'tab'
+ * ```
+ *
+ * ## Recommendation
+ *
+ * First some background.
+ * The number of spaces that occur after list markers (`*`, `-`, and `+` for
+ * unordered lists and `.` and `)` for unordered lists) and before the content
+ * on the first line,
+ * defines how much indentation can be used for further lines.
+ * At least one space is required and up to 4 spaces are allowed.
+ * If there is no further content after the marker then it’s a blank line which
+ * is handled as if there was one space.
+ * If there are 5 or more spaces and then content then it’s also seen as one
+ * space and the rest is seen as indented code.
+ *
+ * Regardless of ordered and unordered,
+ * there are two kinds of lists in markdown,
+ * tight and loose.
+ * Lists are tight by default but if there is a blank line between two list
+ * items or between two blocks inside an item,
+ * that turns the whole list into a loose list.
+ * When turning markdown into HTML,
+ * paragraphs in tight lists are not wrapped in `<p>` tags.
+ *
+ * How indentation of lists works in markdown has historically been a mess,
+ * especially with how they interact with indented code.
+ * CommonMark made that a *lot* better,
+ * but there remain (documented but complex) edge cases and some behavior
+ * intuitive.
+ * Due to this, `'tab'` works the best in most markdown parsers *and* in
+ * CommonMark.
+ * Currently the situation between markdown parsers is better,
+ * so the default `'one'`,
+ * which seems to be the most common style used by authors,
+ * is okay.
+ *
+ * ## Fix
+ *
+ * [`remark-stringify`][github-remark-stringify] uses `listItemIndent: 'one'`
+ * by default.
+ * `listItemIndent: 'mixed'` or `listItemIndent: 'tab'` is also supported.
+ *
+ * [api-options]: #options
+ * [api-remark-lint-list-item-indent]: #unifieduseremarklintlistitemindent-options
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
+ *
+ * @module list-item-indent
+ * @author Titus Wormer
+ * @copyright 2015 Titus Wormer
+ * @license MIT
+ *
+ * @example
+ *   {"name": "ok.md"}
+ *
+ *   *␠Mercury.
+ *   *␠Venus.
+ *
+ *   111.␠Earth
+ *   ␠␠␠␠␠and Mars.
+ *
+ *   *␠**Jupiter**.
+ *
+ *   ␠␠Jupiter is the fifth planet from the Sun and the largest in the Solar
+ *   ␠␠System.
+ *
+ *   *␠Saturn.
+ *
+ *   ␠␠Saturn is the sixth planet from the Sun and the second-largest in the Solar System, after Jupiter.
+ *
+ * @example
+ *   {"config": "mixed", "name": "ok.md"}
+ *
+ *   *␠Mercury.
+ *   *␠Venus.
+ *
+ *   111.␠Earth
+ *   ␠␠␠␠␠and Mars.
+ *
+ *   *␠␠␠**Jupiter**.
+ *
+ *   ␠␠␠␠Jupiter is the fifth planet from the Sun and the largest in the Solar
+ *   ␠␠␠␠System.
+ *
+ *   *␠␠␠Saturn.
+ *
+ *   ␠␠␠␠Saturn is the sixth planet from the Sun and the second-largest in the Solar System, after Jupiter.
+ *
+ * @example
+ *   {"config": "mixed", "label": "input", "name": "not-ok.md"}
+ *
+ *   *␠␠␠Mercury.
+ *   *␠␠␠Venus.
+ *
+ *   111.␠␠␠␠Earth
+ *   ␠␠␠␠␠␠␠␠and Mars.
+ *
+ *   *␠**Jupiter**.
+ *
+ *   ␠␠Jupiter is the fifth planet from the Sun and the largest in the Solar
+ *   ␠␠System.
+ *
+ *   *␠Saturn.
+ *
+ *   ␠␠Saturn is the sixth planet from the Sun and the second-largest in the Solar System, after Jupiter.
+ * @example
+ *   {"config": "mixed", "label": "output", "name": "not-ok.md"}
+ *
+ *   1:5: Unexpected `3` spaces between list item marker and content in tight list, expected `1` space, remove `2` spaces
+ *   2:5: Unexpected `3` spaces between list item marker and content in tight list, expected `1` space, remove `2` spaces
+ *   4:9: Unexpected `4` spaces between list item marker and content in tight list, expected `1` space, remove `3` spaces
+ *   7:3: Unexpected `1` space between list item marker and content in loose list, expected `3` spaces, add `2` spaces
+ *   12:3: Unexpected `1` space between list item marker and content in loose list, expected `3` spaces, add `2` spaces
+ *
+ * @example
+ *   {"config": "one", "name": "ok.md"}
+ *
+ *   *␠Mercury.
+ *   *␠Venus.
+ *
+ *   111.␠Earth
+ *   ␠␠␠␠␠and Mars.
+ *
+ *   *␠**Jupiter**.
+ *
+ *   ␠␠Jupiter is the fifth planet from the Sun and the largest in the Solar
+ *   ␠␠System.
+ *
+ *   *␠Saturn.
+ *
+ *   ␠␠Saturn is the sixth planet from the Sun and the second-largest in the Solar System, after Jupiter.
+ *
+ * @example
+ *   {"config": "one", "label": "input", "name": "not-ok.md"}
+ *
+ *   *␠␠␠Mercury.
+ *   *␠␠␠Venus.
+ *
+ *   111.␠␠␠␠Earth
+ *   ␠␠␠␠␠␠␠␠and Mars.
+ *
+ *   *␠␠␠**Jupiter**.
+ *
+ *   ␠␠␠␠Jupiter is the fifth planet from the Sun and the largest in the Solar
+ *   ␠␠␠␠System.
+ *
+ *   *␠␠␠Saturn.
+ *
+ *   ␠␠␠␠Saturn is the sixth planet from the Sun and the second-largest in the Solar System, after Jupiter.
+ * @example
+ *   {"config": "one", "label": "output", "name": "not-ok.md"}
+ *
+ *   1:5: Unexpected `3` spaces between list item marker and content, expected `1` space, remove `2` spaces
+ *   2:5: Unexpected `3` spaces between list item marker and content, expected `1` space, remove `2` spaces
+ *   4:9: Unexpected `4` spaces between list item marker and content, expected `1` space, remove `3` spaces
+ *   7:5: Unexpected `3` spaces between list item marker and content, expected `1` space, remove `2` spaces
+ *   12:5: Unexpected `3` spaces between list item marker and content, expected `1` space, remove `2` spaces
+ *
+ * @example
+ *   {"config": "tab", "name": "ok.md"}
+ *
+ *   *␠␠␠Mercury.
+ *   *␠␠␠Venus.
+ *
+ *   111.␠␠␠␠Earth
+ *   ␠␠␠␠␠␠␠␠and Mars.
+ *
+ *   *␠␠␠**Jupiter**.
+ *
+ *   ␠␠␠␠Jupiter is the fifth planet from the Sun and the largest in the Solar
+ *   ␠␠␠␠System.
+ *
+ *   *␠␠␠Saturn.
+ *
+ *   ␠␠␠␠Saturn is the sixth planet from the Sun and the second-largest in the Solar System, after Jupiter.
+ *
+ * @example
+ *   {"config": "tab", "label": "input", "name": "not-ok.md"}
+ *
+ *   *␠Mercury.
+ *   *␠Venus.
+ *
+ *   111.␠Earth
+ *   ␠␠␠␠␠and Mars.
+ *
+ *   *␠**Jupiter**.
+ *
+ *   ␠␠Jupiter is the fifth planet from the Sun and the largest in the Solar
+ *   ␠␠System.
+ *
+ *   *␠Saturn.
+ *
+ *   ␠␠Saturn is the sixth planet from the Sun and the second-largest in the Solar System, after Jupiter.
+ * @example
+ *   {"config": "tab", "label": "output", "name": "not-ok.md"}
+ *
+ *   1:3: Unexpected `1` space between list item marker and content, expected `3` spaces, add `2` spaces
+ *   2:3: Unexpected `1` space between list item marker and content, expected `3` spaces, add `2` spaces
+ *   4:6: Unexpected `1` space between list item marker and content, expected `4` spaces, add `3` spaces
+ *   7:3: Unexpected `1` space between list item marker and content, expected `3` spaces, add `2` spaces
+ *   12:3: Unexpected `1` space between list item marker and content, expected `3` spaces, add `2` spaces
+ *
+ * @example
+ *   {"config": "🌍", "label": "output", "name": "not-ok.md", "positionless": true}
+ *
+ *   1:1: Unexpected value `🌍` for `options`, expected `'mixed'`, `'one'`, or `'tab'`
+ *
+ * @example
+ *   {"config": "mixed", "gfm": true, "label": "input", "name": "gfm.md"}
+ *
+ *   *␠[x] Mercury.
+ *
+ *   1.␠␠[ ] Venus.
+ *
+ *   2.␠␠[ ] Earth.
+ *
+ * @example
+ *   {"config": "one", "gfm": true, "name": "gfm.md"}
+ *
+ *   *␠[x] Mercury.
+ *
+ *   1.␠[ ] Venus.
+ *
+ *   2.␠[ ] Earth.
+ *
+ * @example
+ *   {"config": "tab", "gfm": true, "name": "gfm.md"}
+ *
+ *   *␠␠␠[x] Mercury.
+ *
+ *   1.␠␠[ ] Venus.
+ *
+ *   2.␠␠[ ] Earth.
+ *
+ * @example
+ *   {"config": "mixed", "name": "loose-tight.md"}
+ *
+ *   Loose lists have blank lines between items:
+ *
+ *   *␠␠␠Mercury.
+ *
+ *   *␠␠␠Venus.
+ *
+ *   …or between children of items:
+ *
+ *   1.␠␠Earth.
+ *
+ *   ␠␠␠␠Earth is the third planet from the Sun and the only astronomical
+ *   ␠␠␠␠object known to harbor life.
+ */
+const remarkLintListItemIndent = lintRule$1(
+  {
+    origin: 'remark-lint:list-item-indent',
+    url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-list-item-indent#readme'
+  },
+  function (tree, file, options) {
+    const value = String(file);
+    let expected;
+    if (options === null || options === undefined) {
+      expected = 'one';
+    } else if (options === 'space') {
+      file.fail(
+        'Unexpected value `' + options + "` for `options`, expected `'one'`"
+      );
+    } else if (options === 'tab-size') {
+      file.fail(
+        'Unexpected value `' + options + "` for `options`, expected `'tab'`"
+      );
+    } else if (options === 'mixed' || options === 'one' || options === 'tab') {
+      expected = options;
+    } else {
+      file.fail(
+        'Unexpected value `' +
+          options +
+          "` for `options`, expected `'mixed'`, `'one'`, or `'tab'`"
+      );
+    }
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (node.type !== 'list') return
+      let loose = node.spread;
+      if (!loose) {
+        for (const child of node.children) {
+          if (child.spread) {
+            loose = true;
+            break
+          }
+        }
+      }
+      for (const child of node.children) {
+        const head = child.children[0];
+        const itemStart = pointStart(child);
+        const headStart = pointStart(head);
         if (
-          grandparent &&
-          grandparent.type === 'root' &&
-          grandparent.position &&
-          typeof grandparent.position.start.column === 'number' &&
-          item.position &&
-          typeof item.position.start.column === 'number'
+          itemStart &&
+          headStart &&
+          typeof itemStart.offset === 'number' &&
+          typeof headStart.offset === 'number'
         ) {
-          const indent =
-            item.position.start.column - grandparent.position.start.column;
-          if (indent) {
+          let slice = value.slice(itemStart.offset, headStart.offset);
+          const checkboxIndex = slice.indexOf('[');
+          if (checkboxIndex !== -1) slice = slice.slice(0, checkboxIndex);
+          const actualIndent = slice.length;
+          let end = actualIndent;
+          let previous = slice.charCodeAt(end - 1);
+          while (previous === 9 || previous === 32) {
+            end--;
+            previous = slice.charCodeAt(end - 1);
+          }
+          let expectedIndent = end + 1;
+          if (expected === 'tab' || (expected === 'mixed' && loose)) {
+            expectedIndent = Math.ceil(expectedIndent / 4) * 4;
+          }
+          const expectedSpaces = expectedIndent - end;
+          const actualSpaces = actualIndent - end;
+          if (actualSpaces !== expectedSpaces) {
+            const difference = expectedSpaces - actualSpaces;
+            const differenceAbsolute = Math.abs(difference);
             file.message(
-              'Incorrect indentation before bullet: remove ' +
-                indent +
-                ' ' +
-                plural('space', indent),
-              item.position.start
+              'Unexpected `' +
+                actualSpaces +
+                '` ' +
+                pluralize('space', actualSpaces) +
+                ' between list item marker and content' +
+                (expected === 'mixed'
+                  ? ' in ' + (loose ? 'loose' : 'tight') + ' list'
+                  : '') +
+                ', expected `' +
+                expectedSpaces +
+                '` ' +
+                pluralize('space', expectedSpaces) +
+                ', ' +
+                (difference > 0 ? 'add' : 'remove') +
+                ' `' +
+                differenceAbsolute +
+                '` ' +
+                pluralize('space', differenceAbsolute),
+              {ancestors: [...parents, node, child], place: headStart}
             );
           }
         }
@@ -12762,683 +12684,331 @@ const remarkLintListItemBulletIndent = lintRule(
     });
   }
 );
-var remarkLintListItemBulletIndent$1 = remarkLintListItemBulletIndent;
-
-const pointStart = point('start');
-const pointEnd = point('end');
-function point(type) {
-  return point
-  function point(node) {
-    const point = (node && node.position && node.position[type]) || {};
-    return {
-      line: point.line || null,
-      column: point.column || null,
-      offset: point.offset > -1 ? point.offset : null
-    }
-  }
-}
-
-function generated(node) {
-  return (
-    !node ||
-    !node.position ||
-    !node.position.start ||
-    !node.position.start.line ||
-    !node.position.start.column ||
-    !node.position.end ||
-    !node.position.end.line ||
-    !node.position.end.column
-  )
-}
 
 /**
+ * remark-lint rule to warn for lazy lines in block quotes.
+ *
+ * ## What is this?
+ *
+ * This package checks the style of block quotes.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that the spacing between list item markers
- * and content is inconsistent.
+ * You can use this package to check that the style of block quotes is
+ * consistent.
  *
  * ## API
  *
- * The following options (default: `'tab-size'`) are accepted:
+ * ### `unified().use(remarkLintNoBlockquoteWithoutMarker)`
  *
- * *   `'space'`
- *     — prefer a single space
- * *   `'tab-size'`
- *     — prefer spaces the size of the next tab stop
- * *   `'mixed'`
- *     — prefer `'space'` for tight lists and `'tab-size'` for loose lists
+ * Warn for lazy lines in block quotes.
  *
- * ## Recommendation
- *
- * First, some background.
- * The number of spaces that occur after list markers (`*`, `-`, and `+` for
- * unordered lists, or `.` and `)` for unordered lists) and before the content
- * on the first line, defines how much indentation can be used for further
- * lines.
- * At least one space is required and up to 4 spaces are allowed (if there is no
- * further content after the marker then it’s a blank line which is handled as
- * if there was one space; if there are 5 or more spaces and then content, it’s
- * also seen as one space and the rest is seen as indented code).
- *
- * There are two types of lists in markdown (other than ordered and unordered):
- * tight and loose lists.
- * Lists are tight by default but if there is a blank line between two list
- * items or between two blocks inside an item, that turns the whole list into a
- * loose list.
- * When turning markdown into HTML, paragraphs in tight lists are not wrapped
- * in `<p>` tags.
- *
- * Historically, how indentation of lists works in markdown has been a mess,
- * especially with how they interact with indented code.
- * CommonMark made that a *lot* better, but there remain (documented but
- * complex) edge cases and some behavior intuitive.
- * Due to this, the default of this list is `'tab-size'`, which worked the best
- * in most markdown parsers.
- * Currently, the situation between markdown parsers is better, so choosing
- * `'space'` (which seems to be the most common style used by authors) should
- * be okay.
- *
- * ## Fix
- *
- * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
- * uses `'tab-size'` (named `'tab'` there) by default.
- * [`listItemIndent: '1'` (for `'space'`) or `listItemIndent: 'mixed'`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify#optionslistitemindent)
- * is supported.
- *
- * @module list-item-indent
- * @summary
- *   remark-lint rule to warn when spacing between list item markers and
- *   content is inconsistent.
- * @author Titus Wormer
- * @copyright 2015 Titus Wormer
- * @license MIT
- * @example
- *   {"name": "ok.md"}
- *
- *   *···List
- *   ····item.
- *
- *   Paragraph.
- *
- *   11.·List
- *   ····item.
- *
- *   Paragraph.
- *
- *   *···List
- *   ····item.
- *
- *   *···List
- *   ····item.
- *
- * @example
- *   {"name": "ok.md", "config": "mixed"}
- *
- *   *·List item.
- *
- *   Paragraph.
- *
- *   11.·List item
- *
- *   Paragraph.
- *
- *   *···List
- *   ····item.
- *
- *   *···List
- *   ····item.
- *
- * @example
- *   {"name": "ok.md", "config": "space"}
- *
- *   *·List item.
- *
- *   Paragraph.
- *
- *   11.·List item
- *
- *   Paragraph.
- *
- *   *·List
- *   ··item.
- *
- *   *·List
- *   ··item.
- *
- * @example
- *   {"name": "not-ok.md", "config": "space", "label": "input"}
- *
- *   *···List
- *   ····item.
- *
- * @example
- *   {"name": "not-ok.md", "config": "space", "label": "output"}
- *
- *    1:5: Incorrect list-item indent: remove 2 spaces
- *
- * @example
- *   {"name": "not-ok.md", "config": "tab-size", "label": "input"}
- *
- *   *·List
- *   ··item.
- *
- * @example
- *   {"name": "not-ok.md", "config": "tab-size", "label": "output"}
- *
- *    1:3: Incorrect list-item indent: add 2 spaces
- *
- * @example
- *   {"name": "not-ok.md", "config": "mixed", "label": "input"}
- *
- *   *···List item.
- *
- * @example
- *   {"name": "not-ok.md", "config": "mixed", "label": "output"}
- *
- *    1:5: Incorrect list-item indent: remove 2 spaces
- *
- * @example
- *   {"name": "not-ok.md", "config": "💩", "label": "output", "positionless": true}
- *
- *    1:1: Incorrect list-item indent style `💩`: use either `'tab-size'`, `'space'`, or `'mixed'`
- */
-const remarkLintListItemIndent = lintRule(
-  {
-    origin: 'remark-lint:list-item-indent',
-    url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-list-item-indent#readme'
-  },
-  (tree, file, option = 'tab-size') => {
-    const value = String(file);
-    if (option !== 'tab-size' && option !== 'space' && option !== 'mixed') {
-      file.fail(
-        'Incorrect list-item indent style `' +
-          option +
-          "`: use either `'tab-size'`, `'space'`, or `'mixed'`"
-      );
-    }
-    visit$1(tree, 'list', (node) => {
-      if (generated(node)) return
-      const spread = node.spread;
-      let index = -1;
-      while (++index < node.children.length) {
-        const item = node.children[index];
-        const head = item.children[0];
-        const final = pointStart(head);
-        const marker = value
-          .slice(pointStart(item).offset, final.offset)
-          .replace(/\[[x ]?]\s*$/i, '');
-        const bulletSize = marker.replace(/\s+$/, '').length;
-        const style =
-          option === 'tab-size' || (option === 'mixed' && spread)
-            ? Math.ceil(bulletSize / 4) * 4
-            : bulletSize + 1;
-        if (marker.length !== style) {
-          const diff = style - marker.length;
-          const abs = Math.abs(diff);
-          file.message(
-            'Incorrect list-item indent: ' +
-              (diff > 0 ? 'add' : 'remove') +
-              ' ' +
-              abs +
-              ' ' +
-              plural('space', abs),
-            final
-          );
-        }
-      }
-    });
-  }
-);
-var remarkLintListItemIndent$1 = remarkLintListItemIndent;
-
-/**
- * ## When should I use this?
- *
- * You can use this package to check that lines in block quotes start with `>`.
- *
- * ## API
+ * ###### Parameters
  *
  * There are no options.
  *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
  * ## Recommendation
  *
- * Rules around “lazy” lines are not straightforward and visually confusing,
+ * Rules around lazy lines are not straightforward and visually confusing,
  * so it’s recommended to start each line with a `>`.
  *
  * ## Fix
  *
- * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
- * adds `>` markers to every line in a block quote.
+ * [`remark-stringify`][github-remark-stringify] adds `>` markers to every line
+ * in a block quote.
+ *
+ * [api-remark-lint-no-blockquote-without-marker]: #unifieduseremarklintnoblockquotewithoutmarker
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module no-blockquote-without-marker
- * @summary
- *   remark-lint rule to warn when lines in block quotes start without `>`.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
  * @example
  *   {"name": "ok.md"}
  *
- *   > Foo…
- *   > …bar…
- *   > …baz.
+ *   > Mercury,
+ *   > Venus,
+ *   > and Earth.
+ *
+ *   Mars.
  *
  * @example
  *   {"name": "ok-tabs.md"}
  *
- *   >»Foo…
- *   >»…bar…
- *   >»…baz.
+ *   >␉Mercury,
+ *   >␉Venus,
+ *   >␉and Earth.
  *
  * @example
- *   {"name": "not-ok.md", "label": "input"}
+ *   {"label": "input", "name": "not-ok.md"}
  *
- *   > Foo…
- *   …bar…
- *   > …baz.
+ *   > Mercury,
+ *   Venus,
+ *   > and Earth.
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   2:1: Unexpected `0` block quote markers before paragraph line, expected `1` marker, add `1` marker
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"label": "input", "name": "not-ok-tabs.md"}
  *
- *   2:1: Missing marker in block quote
+ *   >␉Mercury,
+ *   ␉Venus,
+ *   and Earth.
+ * @example
+ *   {"label": "output", "name": "not-ok-tabs.md"}
+ *
+ *   2:2: Unexpected `0` block quote markers before paragraph line, expected `1` marker, add `1` marker
+ *   3:1: Unexpected `0` block quote markers before paragraph line, expected `1` marker, add `1` marker
  *
  * @example
- *   {"name": "not-ok-tabs.md", "label": "input"}
+ *   {"label": "input", "name": "containers.md"}
  *
- *   >»Foo…
- *   »…bar…
- *   …baz.
+ *   * > Mercury and
+ *   Venus.
  *
+ *   > * Mercury and
+ *     Venus.
+ *
+ *   * > * Mercury and
+ *       Venus.
+ *
+ *   > * > Mercury and
+ *         Venus.
+ *
+ *   ***
+ *
+ *   > * > Mercury and
+ *   >     Venus.
  * @example
- *   {"name": "not-ok-tabs.md", "label": "output"}
+ *   {"label": "output", "name": "containers.md"}
  *
- *   2:1: Missing marker in block quote
- *   3:1: Missing marker in block quote
+ *   2:1: Unexpected `0` block quote markers before paragraph line, expected `1` marker, add `1` marker
+ *   5:3: Unexpected `0` block quote markers before paragraph line, expected `1` marker, add `1` marker
+ *   8:5: Unexpected `0` block quote markers before paragraph line, expected `1` marker, add `1` marker
+ *   11:7: Unexpected `0` block quote markers before paragraph line, expected `2` markers, add `2` markers
+ *   16:7: Unexpected `1` block quote marker before paragraph line, expected `2` markers, add `1` marker
  */
-const remarkLintNoBlockquoteWithoutMarker = lintRule(
+const remarkLintNoBlockquoteWithoutMarker = lintRule$1(
   {
     origin: 'remark-lint:no-blockquote-without-marker',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-blockquote-without-marker#readme'
   },
-  (tree, file) => {
+  function (tree, file) {
     const value = String(file);
     const loc = location(file);
-    visit$1(tree, 'blockquote', (node) => {
-      let index = -1;
-      while (++index < node.children.length) {
-        const child = node.children[index];
-        if (child.type === 'paragraph' && !generated(child)) {
-          const end = pointEnd(child).line;
-          const column = pointStart(child).column;
-          let line = pointStart(child).line;
-          while (++line <= end) {
-            const offset = loc.toOffset({line, column});
-            if (/>[\t ]+$/.test(value.slice(offset - 5, offset))) {
-              continue
-            }
-            file.message('Missing marker in block quote', {
-              line,
-              column: column - 2
-            });
-          }
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (node.type !== 'paragraph') return
+      let expected = 0;
+      for (const parent of parents) {
+        if (parent.type === 'blockquote') {
+          expected++;
+        }
+        else if (
+          parent.type === 'containerDirective' ||
+          parent.type === 'footnoteDefinition' ||
+          parent.type === 'list' ||
+          parent.type === 'listItem' ||
+          parent.type === 'root'
+        ) ; else {
+          return SKIP
         }
       }
-    });
-  }
-);
-var remarkLintNoBlockquoteWithoutMarker$1 = remarkLintNoBlockquoteWithoutMarker;
-
-/**
- * ## When should I use this?
- *
- * You can use this package to check that autolink literal URLs are not used.
- *
- * ## API
- *
- * There are no options.
- *
- * ## Recommendation
- *
- * Autolink literal URLs (just a URL) are a feature enabled by GFM.
- * They don’t work everywhere.
- * Due to this, it’s recommended to instead use normal autolinks
- * (`<https://url>`) or links (`[text](url)`).
- *
- * ## Fix
- *
- * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
- * never creates autolink literals and always uses normal autolinks (`<url>`).
- *
- * @module no-literal-urls
- * @summary
- *   remark-lint rule to warn for autolink literals.
- * @author Titus Wormer
- * @copyright 2015 Titus Wormer
- * @license MIT
- * @example
- *   {"name": "ok.md"}
- *
- *   <http://foo.bar/baz>
- *
- * @example
- *   {"name": "not-ok.md", "label": "input", "gfm": true}
- *
- *   http://foo.bar/baz
- *
- * @example
- *   {"name": "not-ok.md", "label": "output", "gfm": true}
- *
- *   1:1-1:19: Don’t use literal URLs without angle brackets
- */
-const remarkLintNoLiteralUrls = lintRule(
-  {
-    origin: 'remark-lint:no-literal-urls',
-    url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-literal-urls#readme'
-  },
-  (tree, file) => {
-    visit$1(tree, 'link', (node) => {
-      const value = toString(node);
-      if (
-        !generated(node) &&
-        pointStart(node).column === pointStart(node.children[0]).column &&
-        pointEnd(node).column ===
-          pointEnd(node.children[node.children.length - 1]).column &&
-        (node.url === 'mailto:' + value || node.url === value)
-      ) {
-        file.message('Don’t use literal URLs without angle brackets', node);
-      }
-    });
-  }
-);
-var remarkLintNoLiteralUrls$1 = remarkLintNoLiteralUrls;
-
-/**
- * ## When should I use this?
- *
- * You can use this package to check that ordered list markers are consistent.
- *
- * ## API
- *
- * The following options (default: `'consistent'`) are accepted:
- *
- * *   `'.'`
- *     — prefer dots
- * *   `')'`
- *     — prefer parens
- * *   `'consistent'`
- *     — detect the first used style and warn when further markers differ
- *
- * ## Recommendation
- *
- * Parens for list markers were not supported in markdown before CommonMark.
- * While they should work in most places now, not all markdown parsers follow
- * CommonMark.
- * Due to this, it’s recommended to prefer dots.
- *
- * ## Fix
- *
- * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
- * formats ordered lists with dots by default.
- * Pass
- * [`bulletOrdered: ')'`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify#optionsbulletordered)
- * to always use parens.
- *
- * @module ordered-list-marker-style
- * @summary
- *   remark-lint rule to warn when ordered list markers are inconsistent.
- * @author Titus Wormer
- * @copyright 2015 Titus Wormer
- * @license MIT
- * @example
- *   {"name": "ok.md"}
- *
- *   1.  Foo
- *
- *
- *   1.  Bar
- *
- *   Unordered lists are not affected by this rule.
- *
- *   * Foo
- *
- * @example
- *   {"name": "ok.md", "config": "."}
- *
- *   1.  Foo
- *
- *   2.  Bar
- *
- * @example
- *   {"name": "ok.md", "config": ")"}
- *
- *   1)  Foo
- *
- *   2)  Bar
- *
- * @example
- *   {"name": "not-ok.md", "label": "input"}
- *
- *   1.  Foo
- *
- *   2)  Bar
- *
- * @example
- *   {"name": "not-ok.md", "label": "output"}
- *
- *   3:1-3:8: Marker style should be `.`
- *
- * @example
- *   {"name": "not-ok.md", "label": "output", "config": "💩", "positionless": true}
- *
- *   1:1: Incorrect ordered list item marker style `💩`: use either `'.'` or `')'`
- */
-const remarkLintOrderedListMarkerStyle = lintRule(
-  {
-    origin: 'remark-lint:ordered-list-marker-style',
-    url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-ordered-list-marker-style#readme'
-  },
-  (tree, file, option = 'consistent') => {
-    const value = String(file);
-    if (option !== 'consistent' && option !== '.' && option !== ')') {
-      file.fail(
-        'Incorrect ordered list item marker style `' +
-          option +
-          "`: use either `'.'` or `')'`"
-      );
-    }
-    visit$1(tree, 'list', (node) => {
-      let index = -1;
-      if (!node.ordered) return
-      while (++index < node.children.length) {
-        const child = node.children[index];
-        if (!generated(child)) {
-          const marker =  (
-            value
-              .slice(
-                pointStart(child).offset,
-                pointStart(child.children[0]).offset
-              )
-              .replace(/\s|\d/g, '')
-              .replace(/\[[x ]?]\s*$/i, '')
+      if (!expected) return SKIP
+      const end = pointEnd(node);
+      const start = pointStart(node);
+      if (!end || !start) return SKIP
+      let line = start.line;
+      while (++line <= end.line) {
+        const lineStart = loc.toOffset({line, column: 1});
+        let actual = 0;
+        let index = lineStart;
+        while (index < value.length) {
+          const code = value.charCodeAt(index);
+          if (code === 9 || code === 32) ; else if (code === 62 ) {
+            actual++;
+          } else {
+            break
+          }
+          index++;
+        }
+        const point = loc.toPoint(index);
+        const difference = expected - actual;
+        if (difference) {
+          file.message(
+            'Unexpected `' +
+              actual +
+              '` block quote ' +
+              pluralize('marker', actual) +
+              ' before paragraph line, expected `' +
+              expected +
+              '` ' +
+              pluralize('marker', expected) +
+              ', add `' +
+              difference +
+              '` ' +
+              pluralize('marker', difference),
+            {ancestors: [...parents, node], place: point}
           );
-          if (option === 'consistent') {
-            option = marker;
-          } else if (marker !== option) {
-            file.message('Marker style should be `' + option + '`', child);
-          }
         }
       }
     });
   }
 );
-var remarkLintOrderedListMarkerStyle$1 = remarkLintOrderedListMarkerStyle;
 
 /**
+ * remark-lint rule to warn when identifiers are defined multiple times.
+ *
+ * ## What is this?
+ *
+ * This package checks that defined identifiers are unique.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that hard breaks use two spaces and
- * not more.
+ * You can use this package to check that definitions are useful.
  *
  * ## API
  *
- * There are no options.
+ * ### `unified().use(remarkLintNoDuplicateDefinitions)`
  *
- * ## Recommendation
+ * Warn when identifiers are defined multiple times.
  *
- * Less than two spaces do not create a hard breaks and more than two spaces
- * have no effect.
- * Due to this, it’s recommended to turn this rule on.
- *
- * @module hard-break-spaces
- * @summary
- *   remark-lint rule to warn when more spaces are used than needed
- *   for hard breaks.
- * @author Titus Wormer
- * @copyright 2015 Titus Wormer
- * @license MIT
- * @example
- *   {"name": "ok.md"}
- *
- *   Lorem ipsum··
- *   dolor sit amet
- *
- * @example
- *   {"name": "not-ok.md", "label": "input"}
- *
- *   Lorem ipsum···
- *   dolor sit amet.
- *
- * @example
- *   {"name": "not-ok.md", "label": "output"}
- *
- *   1:12-2:1: Use two spaces for hard line breaks
- */
-const remarkLintHardBreakSpaces = lintRule(
-  {
-    origin: 'remark-lint:hard-break-spaces',
-    url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-hard-break-spaces#readme'
-  },
-  (tree, file) => {
-    const value = String(file);
-    visit$1(tree, 'break', (node) => {
-      if (!generated(node)) {
-        const slice = value
-          .slice(pointStart(node).offset, pointEnd(node).offset)
-          .split('\n', 1)[0]
-          .replace(/\r$/, '');
-        if (slice.length > 2) {
-          file.message('Use two spaces for hard line breaks', node);
-        }
-      }
-    });
-  }
-);
-var remarkLintHardBreakSpaces$1 = remarkLintHardBreakSpaces;
-
-/**
- * ## When should I use this?
- *
- * You can use this package to check that identifiers are defined once.
- *
- * ## API
+ * ###### Parameters
  *
  * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
  * It’s a mistake when the same identifier is defined multiple times.
  *
+ * [api-remark-lint-no-duplicate-definitions]: #unifieduseremarklintnoduplicatedefinitions
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
+ *
  * @module no-duplicate-definitions
- * @summary
- *   remark-lint rule to warn when identifiers are defined multiple times.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "ok.md"}
  *
- *   [foo]: bar
- *   [baz]: qux
+ *   [mercury]: https://example.com/mercury/
+ *   [venus]: https://example.com/venus/
  *
  * @example
- *   {"name": "not-ok.md", "label": "input"}
+ *   {"label": "input", "name": "not-ok.md"}
  *
- *   [foo]: bar
- *   [foo]: qux
+ *   [mercury]: https://example.com/mercury/
+ *   [mercury]: https://example.com/venus/
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   2:1-2:38: Unexpected definition with an already defined identifier (`mercury`), expected unique identifiers
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"gfm": true, "label": "input", "name": "gfm.md"}
  *
- *   2:1-2:11: Do not use definitions with the same identifier (1:1)
+ *   Mercury[^mercury].
+ *
+ *   [^mercury]:
+ *     Mercury is the first planet from the Sun and the smallest in the Solar
+ *     System.
+ *
+ *   [^mercury]:
+ *     Venus is the second planet from the Sun.
+ *
+ * @example
+ *   {"gfm": true, "label": "output", "name": "gfm.md"}
+ *
+ *   7:1-7:12: Unexpected footnote definition with an already defined identifier (`mercury`), expected unique identifiers
  */
-const remarkLintNoDuplicateDefinitions = lintRule(
+const empty = [];
+const remarkLintNoDuplicateDefinitions = lintRule$1(
   {
     origin: 'remark-lint:no-duplicate-definitions',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-duplicate-definitions#readme'
   },
-  (tree, file) => {
-    const map = Object.create(null);
-    visit$1(tree, (node) => {
-      if (
-        (node.type === 'definition' || node.type === 'footnoteDefinition') &&
-        !generated(node)
-      ) {
-        const identifier = node.identifier;
-        const duplicate = map[identifier];
-        if (duplicate) {
+  function (tree, file) {
+    const definitions = new Map();
+    const footnoteDefinitions = new Map();
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      const [map, identifier] =
+        node.type === 'definition'
+          ? [definitions, node.identifier]
+          : node.type === 'footnoteDefinition'
+            ? [footnoteDefinitions, node.identifier]
+            : empty;
+      if (map && identifier && node.position) {
+        const ancestors = [...parents, node];
+        const duplicateAncestors = map.get(identifier);
+        if (duplicateAncestors) {
+          const duplicate = duplicateAncestors.at(-1);
           file.message(
-            'Do not use definitions with the same identifier (' +
-              duplicate +
-              ')',
-            node
+            'Unexpected ' +
+              (node.type === 'footnoteDefinition' ? 'footnote ' : '') +
+              'definition with an already defined identifier (`' +
+              identifier +
+              '`), expected unique identifiers',
+            {
+              ancestors,
+              cause: new VFileMessage('Identifier already defined here', {
+                ancestors: duplicateAncestors,
+                place: duplicate.position,
+                source: 'remark-lint',
+                ruleId: 'no-duplicate-definitions'
+              }),
+              place: node.position
+            }
           );
         }
-        map[identifier] = stringifyPosition(pointStart(node));
+        map.set(identifier, ancestors);
       }
     });
   }
 );
-var remarkLintNoDuplicateDefinitions$1 = remarkLintNoDuplicateDefinitions;
-
-function headingStyle(node, relative) {
-  const last = node.children[node.children.length - 1];
-  const depth = node.depth;
-  const pos = node.position && node.position.end;
-  const final = last && last.position && last.position.end;
-  if (!pos) {
-    return null
-  }
-  if (!last) {
-    if (pos.column - 1 <= depth * 2) {
-      return consolidate(depth, relative)
-    }
-    return 'atx-closed'
-  }
-  if (final && final.line + 1 === pos.line) {
-    return 'setext'
-  }
-  if (final && final.column + depth < pos.column) {
-    return 'atx-closed'
-  }
-  return consolidate(depth, relative)
-}
-function consolidate(depth, relative) {
-  return depth < 3
-    ? 'atx'
-    : relative === 'atx' || relative === 'setext'
-    ? relative
-    : null
-}
 
 /**
+ * remark-lint rule to warn when extra whitespace is used between hashes and
+ * content in headings.
+ *
+ * ## What is this?
+ *
+ * This package checks whitespace between hashes and content.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that there is on space between `#`
- * characters and the content in headings.
+ * You can use this package to check that headings are consistent.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintNoHeadingContentIndent)`
+ *
+ * Warn when extra whitespace is used between hashes and content in headings.
+ *
+ * ###### Parameters
+ *
  * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
@@ -13447,661 +13017,1158 @@ function consolidate(depth, relative) {
  *
  * ## Fix
  *
- * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
- * formats headings with exactly one space.
+ * [`remark-stringify`][github-remark-stringify] formats headings with one space.
+ *
+ * [api-remark-lint-no-heading-content-indent]: #unifieduseremarklintnoheadingcontentindent
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module no-heading-content-indent
- * @summary
- *   remark-lint rule to warn when there are too many spaces between
- *   hashes and content in headings.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "ok.md"}
  *
- *   #·Foo
+ *   #␠Mercury
  *
- *   ## Bar·##
+ *   ##␠Venus␠##
  *
- *     ##·Baz
+ *   ␠␠##␠Earth
  *
- *   Setext headings are not affected.
+ *   Setext headings are not affected:
  *
- *   Baz
- *   ===
+ *   ␠Mars
+ *   =====
  *
- * @example
- *   {"name": "not-ok.md", "label": "input"}
- *
- *   #··Foo
- *
- *   ## Bar··##
- *
- *     ##··Baz
+ *   ␠Jupiter
+ *   --------
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"label": "input", "name": "not-ok.md"}
  *
- *   1:4: Remove 1 space before this heading’s content
- *   3:7: Remove 1 space after this heading’s content
- *   5:7: Remove 1 space before this heading’s content
+ *   #␠␠Mercury
+ *
+ *   ##␠Venus␠␠##
+ *
+ *   ␠␠##␠␠␠Earth
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   1:4: Unexpected `2` spaces between hashes and content, expected `1` space, remove `1` space
+ *   3:11: Unexpected `2` spaces between content and hashes, expected `1` space, remove `1` space
+ *   5:8: Unexpected `3` spaces between hashes and content, expected `1` space, remove `2` spaces
  *
  * @example
- *   {"name": "empty-heading.md"}
+ *   {"label": "input", "name": "empty-heading.md"}
  *
- *   #··
+ *   #␠␠
+ * @example
+ *   {"label": "output", "name": "empty-heading.md"}
+ *
+ *   1:4: Unexpected `2` spaces between hashes and content, expected `1` space, remove `1` space
  */
-const remarkLintNoHeadingContentIndent = lintRule(
+const remarkLintNoHeadingContentIndent = lintRule$1(
   {
     origin: 'remark-lint:no-heading-content-indent',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-heading-content-indent#readme'
   },
-  (tree, file) => {
-    visit$1(tree, 'heading', (node) => {
-      if (generated(node)) {
+  function (tree, file) {
+    const value = String(file);
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (node.type !== 'heading') return
+      const start = pointStart(node);
+      const end = pointEnd(node);
+      if (
+        !end ||
+        !start ||
+        typeof end.offset !== 'number' ||
+        typeof start.offset !== 'number'
+      ) {
         return
       }
-      const type = headingStyle(node, 'atx');
-      if (type === 'atx' || type === 'atx-closed') {
-        const head = pointStart(node.children[0]).column;
-        if (!head) {
-          return
-        }
-        const diff = head - pointStart(node).column - 1 - node.depth;
-        if (diff) {
-          file.message(
-            'Remove ' +
-              Math.abs(diff) +
-              ' ' +
-              plural('space', Math.abs(diff)) +
-              ' before this heading’s content',
-            pointStart(node.children[0])
-          );
-        }
+      let index = start.offset;
+      let code = value.charCodeAt(index);
+      let found = false;
+      while (value.charCodeAt(index) === 35 ) {
+        index++;
+        found = true;
+        continue
       }
-      if (type === 'atx-closed') {
-        const final = pointEnd(node.children[node.children.length - 1]);
-        const diff = pointEnd(node).column - final.column - 1 - node.depth;
-        if (diff) {
-          file.message(
-            'Remove ' +
-              diff +
-              ' ' +
-              plural('space', diff) +
-              ' after this heading’s content',
-            final
-          );
-        }
+      const from = index;
+      code = value.charCodeAt(index);
+      while (code === 9  || code === 32 ) {
+        code = value.charCodeAt(++index);
+        continue
+      }
+      const size = index - from;
+      if (found && size > 1) {
+        file.message(
+          'Unexpected `' +
+            size +
+            '` ' +
+            pluralize('space', size) +
+            ' between hashes and content, expected `1` space, remove `' +
+            (size - 1) +
+            '` ' +
+            pluralize('space', size - 1),
+          {
+            ancestors: [...parents, node],
+            place: {
+              line: start.line,
+              column: start.column + (index - start.offset),
+              offset: start.offset + (index - start.offset)
+            }
+          }
+        );
+      }
+      const contentStart = index;
+      index = end.offset;
+      code = value.charCodeAt(index - 1);
+      while (code === 9  || code === 32 ) {
+        index--;
+        code = value.charCodeAt(index - 1);
+        continue
+      }
+      let endFound = false;
+      while (value.charCodeAt(index - 1) === 35 ) {
+        index--;
+        endFound = true;
+        continue
+      }
+      const endFrom = index;
+      code = value.charCodeAt(index - 1);
+      while (code === 9  || code === 32 ) {
+        index--;
+        code = value.charCodeAt(index - 1);
+        continue
+      }
+      const endSize = endFrom - index;
+      if (endFound && index > contentStart && endSize > 1) {
+        file.message(
+          'Unexpected `' +
+            endSize +
+            '` ' +
+            pluralize('space', endSize) +
+            ' between content and hashes, expected `1` space, remove `' +
+            (endSize - 1) +
+            '` ' +
+            pluralize('space', endSize - 1),
+          {
+            ancestors: [...parents, node],
+            place: {
+              line: end.line,
+              column: end.column - (end.offset - endFrom),
+              offset: end.offset - (end.offset - endFrom)
+            }
+          }
+        );
       }
     });
   }
 );
-var remarkLintNoHeadingContentIndent$1 = remarkLintNoHeadingContentIndent;
 
 /**
+ * remark-lint rule to warn when GFM autolink literals are used.
+ *
+ * ## What is this?
+ *
+ * This package checks that regular autolinks or full links are used.
+ * Literal autolinks is a GFM feature enabled with
+ * [`remark-gfm`][github-remark-gfm].
+ *
  * ## When should I use this?
  *
- * You can use this package to check that inline constructs (links) are
- * not padded.
- * Historically, it was possible to pad emphasis, strong, and strikethrough
- * too, but this was removed in CommonMark, making this rule much less useful.
+ * You can use this package to check that links are consistent.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintNoLiteralUrls)`
+ *
+ * Warn when GFM autolink literals are used.
+ *
+ * ###### Parameters
+ *
  * There are no options.
  *
- * @module no-inline-padding
- * @summary
- *   remark-lint rule to warn when inline constructs are padded.
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ## Recommendation
+ *
+ * GFM autolink literals (just a raw URL) are a feature enabled by GFM.
+ * They don’t work everywhere.
+ * So,
+ * it’s recommended to instead use regular autolinks (`<https://url>`) or full
+ * links (`[text](url)`).
+ *
+ * ## Fix
+ *
+ * [`remark-stringify`][github-remark-stringify] never generates GFM autolink
+ * literals.
+ * It always generates regular autolinks or full links.
+ *
+ * [api-remark-lint-no-literal-urls]: #unifieduseremarklintnoliteralurls
+ * [github-remark-gfm]: https://github.com/remarkjs/remark-gfm
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
+ *
+ * @module no-literal-urls
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
- * @example
- *   {"name": "ok.md"}
- *
- *   Alpha [bravo](http://echo.fox/trot)
  *
  * @example
- *   {"name": "not-ok.md", "label": "input"}
+ *   {"name": "ok.md", "gfm": true}
  *
- *   Alpha [ bravo ](http://echo.fox/trot)
+ *   <https://example.com/mercury/>
+ *
+ *   ![Venus](http://example.com/venus/).
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"name": "not-ok.md", "label": "input", "gfm": true}
  *
- *   1:7-1:38: Don’t pad `link` with inner spaces
+ *   https://example.com/mercury/
+ *
+ *   www.example.com/venus/
+ *
+ *   earth@mars.planets
+ *
+ * @example
+ *   {"name": "not-ok.md", "label": "output", "gfm": true}
+ *
+ *   1:1-1:29: Unexpected GFM autolink literal, expected regular autolink, add `<` before and `>` after
+ *   3:1-3:23: Unexpected GFM autolink literal, expected regular autolink, add `<http://` before and `>` after
+ *   5:1-5:19: Unexpected GFM autolink literal, expected regular autolink, add `<mailto:` before and `>` after
  */
-const remarkLintNoInlinePadding = lintRule(
+const defaultHttp = 'http://';
+const defaultMailto = 'mailto:';
+const remarkLintNoLiteralUrls = lintRule$1(
   {
-    origin: 'remark-lint:no-inline-padding',
-    url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-inline-padding#readme'
+    origin: 'remark-lint:no-literal-urls',
+    url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-literal-urls#readme'
   },
-  (tree, file) => {
-    visit$1(tree, (node) => {
+  function (tree, file) {
+    const value = String(file);
+    visitParents(tree, 'link', function (node, parents) {
+      const start = pointStart(node);
+      if (!start || typeof start.offset !== 'number') return
+      const raw = toString(node);
+      let protocol;
+      let otherwiseFine = false;
+      if (raw === node.url) {
+        otherwiseFine = true;
+      } else if (defaultHttp + raw === node.url) {
+        protocol = defaultHttp;
+      } else if (defaultMailto + raw === node.url) {
+        protocol = defaultMailto;
+      }
       if (
-        (node.type === 'link' || node.type === 'linkReference') &&
-        !generated(node)
+        (protocol || otherwiseFine) &&
+        !asciiPunctuation(value.charCodeAt(start.offset))
       ) {
-        const value = toString(node);
-        if (value.charAt(0) === ' ' || value.charAt(value.length - 1) === ' ') {
-          file.message('Don’t pad `' + node.type + '` with inner spaces', node);
-        }
+        file.message(
+          'Unexpected GFM autolink literal, expected regular autolink, add ' +
+            (protocol ? '`<' + protocol + '`' : '`<`') +
+            ' before and `>` after',
+          {ancestors: [...parents, node], place: node.position}
+        );
       }
     });
   }
 );
-var remarkLintNoInlinePadding$1 = remarkLintNoInlinePadding;
 
 /**
+ * remark-lint rule to warn when shortcut reference images are used.
+ *
+ * ## What is this?
+ *
+ * This package checks that collapsed or full reference images are used.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that collapsed or full reference images
- * are used.
+ * You can use this package to check that references are consistent.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintNoShortcutReferenceImage)`
+ *
+ * Warn when shortcut reference images are used.
+ *
+ * ###### Parameters
+ *
  * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
  * Shortcut references use an implicit style that looks a lot like something
  * that could occur as plain text instead of syntax.
- * In some cases, plain text is intended instead of an image.
- * Due to this, it’s recommended to use collapsed (or full) references
- * instead.
+ * In some cases,
+ * plain text is intended instead of an image.
+ * So it’s recommended to use collapsed or full references instead.
+ *
+ * [api-remark-lint-no-shortcut-reference-image]: #unifieduseremarklintnoshortcutreferenceimage
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module no-shortcut-reference-image
- * @summary
- *   remark-lint rule to warn when shortcut reference images are used.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "ok.md"}
  *
- *   ![foo][]
+ *   ![Mercury][]
  *
- *   [foo]: http://foo.bar/baz.png
- *
- * @example
- *   {"name": "not-ok.md", "label": "input"}
- *
- *   ![foo]
- *
- *   [foo]: http://foo.bar/baz.png
+ *   [mercury]: /mercury.png
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"label": "input", "name": "not-ok.md"}
  *
- *   1:1-1:7: Use the trailing [] on reference images
+ *   ![Mercury]
+ *
+ *   [mercury]: /mercury.png
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   1:1-1:11: Unexpected shortcut reference image (`![text]`), expected collapsed reference (`![text][]`)
  */
-const remarkLintNoShortcutReferenceImage = lintRule(
+const remarkLintNoShortcutReferenceImage = lintRule$1(
   {
     origin: 'remark-lint:no-shortcut-reference-image',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-shortcut-reference-image#readme'
   },
-  (tree, file) => {
-    visit$1(tree, 'imageReference', (node) => {
-      if (!generated(node) && node.referenceType === 'shortcut') {
-        file.message('Use the trailing [] on reference images', node);
+  function (tree, file) {
+    visitParents(tree, 'imageReference', function (node, parents) {
+      if (node.position && node.referenceType === 'shortcut') {
+        file.message(
+          'Unexpected shortcut reference image (`![text]`), expected collapsed reference (`![text][]`)',
+          {ancestors: [...parents, node], place: node.position}
+        );
       }
     });
   }
 );
-var remarkLintNoShortcutReferenceImage$1 = remarkLintNoShortcutReferenceImage;
 
 /**
+ * remark-lint rule to warn when shortcut reference links are used.
+ *
+ * ## What is this?
+ *
+ * This package checks that collapsed or full reference links are used.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that collapsed or full reference links
- * are used.
+ * You can use this package to check that references are consistent.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintNoShortcutReferenceLink)`
+ *
+ * Warn when shortcut reference links are used.
+ *
+ * ###### Parameters
+ *
  * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
  * Shortcut references use an implicit style that looks a lot like something
  * that could occur as plain text instead of syntax.
- * In some cases, plain text is intended instead of a link.
- * Due to this, it’s recommended to use collapsed (or full) references
- * instead.
+ * In some cases,
+ * plain text is intended instead of a link.
+ * So it’s recommended to use collapsed or full references instead.
+ *
+ * [api-remark-lint-no-shortcut-reference-link]: #unifieduseremarklintnoshortcutreferencelink
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module no-shortcut-reference-link
- * @summary
- *   remark-lint rule to warn when shortcut reference links are used.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "ok.md"}
  *
- *   [foo][]
+ *   [Mercury][]
  *
- *   [foo]: http://foo.bar/baz
- *
- * @example
- *   {"name": "not-ok.md", "label": "input"}
- *
- *   [foo]
- *
- *   [foo]: http://foo.bar/baz
+ *   [mercury]: http://example.com/mercury/
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"label": "input", "name": "not-ok.md"}
  *
- *   1:1-1:6: Use the trailing `[]` on reference links
+ *   [Mercury]
+ *
+ *   [mercury]: http://example.com/mercury/
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   1:1-1:10: Unexpected shortcut reference link (`[text]`), expected collapsed reference (`[text][]`)
  */
-const remarkLintNoShortcutReferenceLink = lintRule(
+const remarkLintNoShortcutReferenceLink = lintRule$1(
   {
     origin: 'remark-lint:no-shortcut-reference-link',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-shortcut-reference-link#readme'
   },
-  (tree, file) => {
-    visit$1(tree, 'linkReference', (node) => {
-      if (!generated(node) && node.referenceType === 'shortcut') {
-        file.message('Use the trailing `[]` on reference links', node);
+  function (tree, file) {
+    visitParents(tree, 'linkReference', function (node, parents) {
+      if (node.position && node.referenceType === 'shortcut') {
+        file.message(
+          'Unexpected shortcut reference link (`[text]`), expected collapsed reference (`[text][]`)',
+          {ancestors: [...parents, node], place: node.position}
+        );
       }
     });
   }
 );
-var remarkLintNoShortcutReferenceLink$1 = remarkLintNoShortcutReferenceLink;
+
+const js = /\s+/g;
+const html = /[\t\n\v\f\r ]+/g;
+function collapseWhiteSpace(value, options) {
+  if (!options) {
+    options = {};
+  } else if (typeof options === 'string') {
+    options = {style: options};
+  }
+  const replace = options.preserveLineEndings ? replaceLineEnding : replaceSpace;
+  return String(value).replace(
+    options.style === 'html' ? html : js,
+    options.trim ? trimFactory(replace) : replace
+  )
+}
+function replaceLineEnding(value) {
+  const match = /\r?\n|\r/.exec(value);
+  return match ? match[0] : ' '
+}
+function replaceSpace() {
+  return ' '
+}
+function trimFactory(replace) {
+  return dropOrReplace
+  function dropOrReplace(value, index, all) {
+    return index === 0 || index + value.length === all.length
+      ? ''
+      : replace(value)
+  }
+}
 
 /**
+ * remark-lint rule to warn when undefined definitions are referenced.
+ *
+ * ## What is this?
+ *
+ * This package checks that referenced definitions are defined.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that referenced definitions are defined.
+ * You can use this package to check for broken references.
  *
  * ## API
  *
- * The following options (default: `undefined`) are accepted:
+ * ### `unified().use(remarkLintNoUndefinedReferences[, options])`
  *
- * *   `Object` with the following fields:
- *     *   `allow` (`Array<string | RegExp | { source: string }>`,
- *         default: `[]`)
- *         — text or regex that you want to be allowed between `[` and `]`
- *         even though it’s undefined; regex is provided via a `RegExp` object
- *         or via a `{source: string}` object where `source` is the source
- *         text of a case-insensitive regex
+ * Warn when undefined definitions are referenced.
+ *
+ * ###### Parameters
+ *
+ * * `options` ([`Options`][api-options], optional)
+ *   — configuration
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ### `Options`
+ *
+ * Configuration (TypeScript type).
+ *
+ * ###### Fields
+ *
+ * * `allow` (`Array<RegExp | string>`, optional)
+ *   — list of values to allow between `[` and `]`
+ * * `allowShortcutLink` (`boolean`, default: `false`)
+ *   — allow shortcut references, which are just brackets such as `[text]`
  *
  * ## Recommendation
  *
  * Shortcut references use an implicit syntax that could also occur as plain
  * text.
- * For example, it is reasonable to expect an author adding `[…]` to abbreviate
- * some text somewhere in a document:
+ * To illustrate,
+ * it is reasonable to expect an author adding `[…]` to abbreviate some text
+ * somewhere in a document:
  *
  * ```markdown
  * > Some […] quote.
  * ```
  *
- * This isn’t a problem, but it might become one when an author later adds a
- * definition:
+ * This isn’t a problem,
+ * but it might become one when an author later adds a definition:
  *
  * ```markdown
- * Some text. […][]
+ * Some new text […][].
  *
- * […] #read-more "Read more"
+ * […]: #read-more
  * ```
  *
  * The second author might expect only their newly added text to form a link,
- * but their changes also result in a link for the first author’s text.
+ * but their changes also result in a link for the text by the first author.
+ *
+ * [api-options]: #options
+ * [api-remark-lint-no-undefined-references]: #unifieduseremarklintnoundefinedreferences-options
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module no-undefined-references
- * @summary
- *   remark-lint rule to warn when undefined definitions are referenced.
  * @author Titus Wormer
  * @copyright 2016 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "ok.md"}
  *
- *   [foo][]
+ *   [Mercury][] is the first planet from the Sun and the smallest in the Solar
+ *   System.
  *
- *   Just a [ bracket.
+ *   Venus is the second planet from the [Sun.
  *
- *   Typically, you’d want to use escapes (with a backslash: \\) to escape what
- *   could turn into a \[reference otherwise].
+ *   Earth is the third planet from the \[Sun] and the only astronomical object
+ *   known to harbor life\.
  *
- *   Just two braces can’t link: [].
+ *   Mars is the fourth planet from the Sun: [].
  *
- *   [foo]: https://example.com
- *
- * @example
- *   {"name": "ok-allow.md", "config": {"allow": ["...", "…"]}}
- *
- *   > Eliding a portion of a quoted passage […] is acceptable.
+ *   [mercury]: https://example.com/mercury/
  *
  * @example
- *   {"name": "ok-allow.md", "config": {"allow": ["a", {"source": "^b\\."}]}}
+ *   {"label": "input", "name": "not-ok.md"}
  *
- *   [foo][b.c]
+ *   [Mercury] is the first planet from the Sun and the smallest in the Solar
+ *   System.
  *
- *   [bar][a]
+ *   [Venus][] is the second planet from the Sun.
  *
- *   Matching is case-insensitive: [bar][B.C]
+ *   [Earth][earth] is the third planet from the Sun and the only astronomical
+ *   object known to harbor life.
+ *
+ *   ![Mars] is the fourth planet from the Sun in the [Solar
+ *   System].
+ *
+ *   > Jupiter is the fifth planet from the Sun and the largest in the [Solar
+ *   > System][].
+ *
+ *   [Saturn][ is the sixth planet from the Sun and the second-largest
+ *   in the Solar System, after Jupiter.
+ *
+ *   [*Uranus*][] is the seventh planet from the Sun.
+ *
+ *   [Neptune][neptune][more] is the eighth and farthest planet from the Sun.
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   1:1-1:10: Unexpected reference to undefined definition, expected corresponding definition (`mercury`) for a link or escaped opening bracket (`\[`) for regular text
+ *   4:1-4:10: Unexpected reference to undefined definition, expected corresponding definition (`venus`) for a link or escaped opening bracket (`\[`) for regular text
+ *   6:1-6:15: Unexpected reference to undefined definition, expected corresponding definition (`earth`) for a link or escaped opening bracket (`\[`) for regular text
+ *   9:2-9:8: Unexpected reference to undefined definition, expected corresponding definition (`mars`) for an image or escaped opening bracket (`\[`) for regular text
+ *   9:50-10:8: Unexpected reference to undefined definition, expected corresponding definition (`solar system`) for a link or escaped opening bracket (`\[`) for regular text
+ *   12:67-13:12: Unexpected reference to undefined definition, expected corresponding definition (`solar > system`) for a link or escaped opening bracket (`\[`) for regular text
+ *   15:1-15:9: Unexpected reference to undefined definition, expected corresponding definition (`saturn`) for a link or escaped opening bracket (`\[`) for regular text
+ *   18:1-18:13: Unexpected reference to undefined definition, expected corresponding definition (`*uranus*`) for a link or escaped opening bracket (`\[`) for regular text
+ *   20:1-20:19: Unexpected reference to undefined definition, expected corresponding definition (`neptune`) for a link or escaped opening bracket (`\[`) for regular text
+ *   20:19-20:25: Unexpected reference to undefined definition, expected corresponding definition (`more`) for a link or escaped opening bracket (`\[`) for regular text
  *
  * @example
- *   {"name": "not-ok.md", "label": "input"}
+ *   {"config": {"allow": ["…"]}, "name": "ok-allow.md"}
  *
- *   [bar]
- *
- *   [baz][]
- *
- *   [text][qux]
- *
- *   Spread [over
- *   lines][]
- *
- *   > in [a
- *   > block quote][]
- *
- *   [asd][a
- *
- *   Can include [*emphasis*].
- *
- *   Multiple pairs: [a][b][c].
+ *   Mercury is the first planet from the Sun and the smallest in the Solar
+ *   System. […]
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"config": {"allow": [{"source": "^mer"}, "venus"]}, "name": "source.md"}
  *
- *   1:1-1:6: Found reference to undefined definition
- *   3:1-3:8: Found reference to undefined definition
- *   5:1-5:12: Found reference to undefined definition
- *   7:8-8:9: Found reference to undefined definition
- *   10:6-11:17: Found reference to undefined definition
- *   13:1-13:6: Found reference to undefined definition
- *   15:13-15:25: Found reference to undefined definition
- *   17:17-17:23: Found reference to undefined definition
- *   17:23-17:26: Found reference to undefined definition
+ *   [Mercury][] is the first planet from the Sun and the smallest in the Solar
+ *   System.
+ *
+ *   [Venus][] is the second planet from the Sun.
  *
  * @example
- *   {"name": "not-ok.md", "label": "input", "config": {"allow": ["a", {"source": "^b\\."}]}}
+ *   {"gfm": true, "label": "input", "name": "gfm.md"}
  *
- *   [foo][a.c]
+ *   Mercury[^mercury] is the first planet from the Sun and the smallest in the
+ *   Solar System.
  *
- *   [bar][b]
+ *   [^venus]:
+ *       **Venus** is the second planet from the Sun.
+ * @example
+ *   {"gfm": true, "label": "output", "name": "gfm.md"}
+ *
+ *   1:8-1:18: Unexpected reference to undefined definition, expected corresponding definition (`mercury`) for a footnote or escaped opening bracket (`\[`) for regular text
  *
  * @example
- *   {"name": "not-ok.md", "label": "output", "config": {"allow": ["a", {"source": "^b\\."}]}}
+ *   {"config": {"allowShortcutLink": true}, "label": "input", "name": "allow-shortcut-link.md"}
  *
- *   1:1-1:11: Found reference to undefined definition
- *   3:1-3:9: Found reference to undefined definition
+ *   [Mercury] is the first planet from the Sun and the smallest in the Solar
+ *   System.
+ *
+ *   [Venus][] is the second planet from the Sun.
+ *
+ *   [Earth][earth] is the third planet from the Sun and the only astronomical object
+ *   known to harbor life.
+ * @example
+ *   {"config": {"allowShortcutLink": true}, "label": "output", "name": "allow-shortcut-link.md"}
+ *
+ *   4:1-4:10: Unexpected reference to undefined definition, expected corresponding definition (`venus`) for a link or escaped opening bracket (`\[`) for regular text
+ *   6:1-6:15: Unexpected reference to undefined definition, expected corresponding definition (`earth`) for a link or escaped opening bracket (`\[`) for regular text
  */
-const remarkLintNoUndefinedReferences = lintRule(
+const emptyOptions = {};
+const emptyAllow = [];
+const lineEndingExpression = /(\r?\n|\r)[\t ]*(>[\t ]*)*/g;
+const remarkLintNoUndefinedReferences = lintRule$1(
   {
     origin: 'remark-lint:no-undefined-references',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-undefined-references#readme'
   },
-  (tree, file, option = {}) => {
-    const contents = String(file);
-    const loc = location(file);
-    const lineEnding = /(\r?\n|\r)[\t ]*(>[\t ]*)*/g;
-    const map = Object.create(null);
-    const allow = option.allow || [];
+  function (tree, file, options) {
+    const settings = options || emptyOptions;
+    const allow = settings.allow || emptyAllow;
+    const allowShortcutLink = settings.allowShortcutLink || false;
+    const value = String(file);
+    const toPoint = location(file).toPoint;
+    const definitionIdentifiers = new Set();
+    const footnoteDefinitionIdentifiers = new Set();
     const regexes = [];
     const strings = new Set();
+    const phrasingStacks = [];
     let index = -1;
     while (++index < allow.length) {
       const value = allow[index];
       if (typeof value === 'string') {
         strings.add(normalizeIdentifier(value));
-      } else if (value instanceof RegExp) {
-        regexes.push(value);
-      } else {
-        regexes.push(new RegExp(value.source, 'i'));
+      } else if (typeof value === 'object' && 'source' in value) {
+        regexes.push(new RegExp(value.source, value.flags ?? 'i'));
       }
     }
-    visit$1(tree, (node) => {
-      if (
-        (node.type === 'definition' || node.type === 'footnoteDefinition') &&
-        !generated(node)
-      ) {
-        map[normalizeIdentifier(node.identifier)] = true;
+    visitParents(tree, function (node, parents) {
+      if (node.type === 'definition') {
+        definitionIdentifiers.add(normalizeIdentifier(node.identifier));
+      }
+      if (node.type === 'footnoteDefinition') {
+        footnoteDefinitionIdentifiers.add(normalizeIdentifier(node.identifier));
+      }
+      if (node.type === 'heading' || node.type === 'paragraph') {
+        phrasingStacks.push([...parents, node]);
       }
     });
-    visit$1(tree, (node) => {
+    for (const ancestors of phrasingStacks) {
+      findInPhrasingContainer(ancestors);
+    }
+    function findInPhrasingContainer(ancestors) {
+      const bracketRanges = [];
+      const node = ancestors.at(-1);
+      for (const child of node.children) {
+        if (child.type === 'text') {
+          findRangesInText(bracketRanges, [...ancestors, child]);
+        } else if ('children' in child) {
+          findInPhrasingContainer([...ancestors, child]);
+        }
+      }
+      for (const range of bracketRanges) {
+        handleRange(range);
+      }
+    }
+    function findRangesInText(ranges, ancestors) {
+      const node = ancestors.at(-1);
+      const end = pointEnd(node);
+      const start = pointStart(node);
       if (
-        (node.type === 'imageReference' ||
-          node.type === 'linkReference' ||
-          node.type === 'footnoteReference') &&
-        !generated(node) &&
-        !(normalizeIdentifier(node.identifier) in map) &&
-        !isAllowed(node.identifier)
+        !end ||
+        !start ||
+        typeof start.offset !== 'number' ||
+        typeof end.offset !== 'number'
       ) {
-        file.message('Found reference to undefined definition', node);
+        return
       }
-      if (node.type === 'paragraph' || node.type === 'heading') {
-        findInPhrasing(node);
+      const source = value.slice(start.offset, end.offset);
+      const lines = [[start.offset, '']];
+      let last = 0;
+      lineEndingExpression.lastIndex = 0;
+      let match = lineEndingExpression.exec(source);
+      while (match) {
+        const index = match.index;
+        const lineTuple = lines.at(-1);
+        lineTuple[1] = source.slice(last, index);
+        last = index + match[0].length;
+        lines.push([start.offset + last, '']);
+        match = lineEndingExpression.exec(source);
       }
-    });
-    function findInPhrasing(node) {
-      let ranges = [];
-      visit$1(node, (child) => {
-        if (child === node) return
-        if (child.type === 'link' || child.type === 'linkReference') {
-          ranges = [];
-          return SKIP$1
-        }
-        if (child.type !== 'text') return
-        const start = pointStart(child).offset;
-        const end = pointEnd(child).offset;
-        if (typeof start !== 'number' || typeof end !== 'number') {
-          return EXIT$1
-        }
-        const source = contents.slice(start, end);
-        const lines = [[start, '']];
-        let last = 0;
-        lineEnding.lastIndex = 0;
-        let match = lineEnding.exec(source);
-        while (match) {
-          const index = match.index;
-          lines[lines.length - 1][1] = source.slice(last, index);
-          last = index + match[0].length;
-          lines.push([start + last, '']);
-          match = lineEnding.exec(source);
-        }
-        lines[lines.length - 1][1] = source.slice(last);
-        let lineIndex = -1;
-        while (++lineIndex < lines.length) {
-          const line = lines[lineIndex][1];
-          let index = 0;
-          while (index < line.length) {
-            const code = line.charCodeAt(index);
-            if (code === 92) {
-              const next = line.charCodeAt(index + 1);
-              index++;
-              if (next === 91 || next === 93) {
-                index++;
-              }
-            }
-            else if (code === 91) {
-              ranges.push([lines[lineIndex][0] + index]);
-              index++;
-            }
-            else if (code === 93) {
-              if (ranges.length === 0) {
-                index++;
-              } else if (line.charCodeAt(index + 1) === 91) {
-                index++;
-                let range = ranges.pop();
-                if (range) {
-                  range.push(lines[lineIndex][0] + index);
-                  if (range.length === 4) {
-                    handleRange(range);
-                    range = [];
-                  }
-                  range.push(lines[lineIndex][0] + index);
-                  ranges.push(range);
-                  index++;
-                }
-              } else {
-                index++;
-                const range = ranges.pop();
-                if (range) {
-                  range.push(lines[lineIndex][0] + index);
-                  handleRange(range);
-                }
-              }
-            }
-            else {
+      const lineTuple = lines.at(-1);
+      lineTuple[1] = source.slice(last);
+      for (const lineTuple of lines) {
+        const [lineStart, line] = lineTuple;
+        let index = 0;
+        while (index < line.length) {
+          const code = line.charCodeAt(index);
+          if (code === 91 ) {
+            ranges.push([ancestors, [lineStart + index]]);
+            index++;
+          }
+          else if (code === 92 ) {
+            const next = line.charCodeAt(index + 1);
+            index++;
+            if (next === 91  || next === 93 ) {
               index++;
             }
           }
-        }
-      });
-      let index = -1;
-      while (++index < ranges.length) {
-        handleRange(ranges[index]);
-      }
-      return SKIP$1
-      function handleRange(range) {
-        if (range.length === 1) return
-        if (range.length === 3) range.length = 2;
-        if (range.length === 2 && range[0] + 2 === range[1]) return
-        const offset = range.length === 4 && range[2] + 2 !== range[3] ? 2 : 0;
-        const id = contents
-          .slice(range[0 + offset] + 1, range[1 + offset] - 1)
-          .replace(lineEnding, ' ');
-        const pos = {
-          start: loc.toPoint(range[0]),
-          end: loc.toPoint(range[range.length - 1])
-        };
-        if (
-          !generated({position: pos}) &&
-          !(normalizeIdentifier(id) in map) &&
-          !isAllowed(id)
-        ) {
-          file.message('Found reference to undefined definition', pos);
+          else if (code === 93 ) {
+            const bracketInfo = ranges.at(-1);
+            if (!bracketInfo) {
+              index++;
+            }
+            else if (
+              line.charCodeAt(index + 1) === 91  &&
+              bracketInfo[1].length !== 3
+            ) {
+              index++;
+              bracketInfo[1].push(lineStart + index, lineStart + index);
+              index++;
+            }
+            else {
+              index++;
+              bracketInfo[1].push(lineStart + index);
+              handleRange(bracketInfo);
+              ranges.pop();
+            }
+          }
+          else {
+            index++;
+          }
         }
       }
     }
-    function isAllowed(id) {
-      const normalized = normalizeIdentifier(id);
-      return (
-        strings.has(normalized) ||
-        regexes.some((regex) => regex.test(normalized))
-      )
+    function handleRange(bracketRange) {
+      const [ancestors, range] = bracketRange;
+      if (range.length === 1) return
+      if (range.length === 3) range.length = 2;
+      if (range.length === 2 && range[0] + 2 === range[1]) return
+      const label =
+        value.charCodeAt(range[0] - 1) === 33
+          ? 'image'
+          : value.charCodeAt(range[0] + 1) === 94
+            ? 'footnote'
+            : 'link';
+      const offset = range.length === 4 && range[2] + 2 !== range[3] ? 2 : 0;
+      let id = normalizeIdentifier(
+        collapseWhiteSpace(
+          value.slice(range[0 + offset] + 1, range[1 + offset] - 1),
+          {style: 'html', trim: true}
+        )
+      );
+      let defined = definitionIdentifiers;
+      if (label === 'footnote') {
+        if (id.includes(' ')) return
+        defined = footnoteDefinitionIdentifiers;
+        id = id.slice(1);
+      }
+      if (
+        (allowShortcutLink && range.length === 2) ||
+        defined.has(id) ||
+        strings.has(id) ||
+        regexes.some(function (regex) {
+          return regex.test(id)
+        })
+      ) {
+        return
+      }
+      const start = toPoint(range[0]);
+      const end = toPoint(range[range.length - 1]);
+      if (end && start) {
+        file.message(
+          'Unexpected reference to undefined definition, expected corresponding definition (`' +
+            id.toLowerCase() +
+            '`) for ' +
+            (label === 'image' ? 'an' : 'a') +
+            ' ' +
+            label +
+            ' or escaped opening bracket (`\\[`) for regular text',
+          {
+            ancestors,
+            place: {start, end}
+          }
+        );
+      }
     }
   }
 );
-var remarkLintNoUndefinedReferences$1 = remarkLintNoUndefinedReferences;
 
 /**
+ * remark-lint rule to warn when unreferenced definitions are used.
+ *
+ * ## What is this?
+ *
+ * This package checks that definitions are referenced.
+ *
  * ## When should I use this?
  *
- * You can use this package to check definitions are referenced.
+ * You can use this package to check definitions.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintNoUnusedDefinitions)`
+ *
+ * Warn when unreferenced definitions are used.
+ *
+ * ###### Parameters
+ *
  * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
  * Unused definitions do not contribute anything, so they can be removed.
  *
+ * [api-remark-lint-no-unused-definitions]: #unifieduseremarklintnounuseddefinitions
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
+ *
  * @module no-unused-definitions
- * @summary
- *   remark-lint rule to warn when unreferenced definitions are used.
  * @author Titus Wormer
  * @copyright 2016 Titus Wormer
  * @license MIT
  * @example
  *   {"name": "ok.md"}
  *
- *   [foo][]
+ *   [Mercury][]
  *
- *   [foo]: https://example.com
- *
- * @example
- *   {"name": "not-ok.md", "label": "input"}
- *
- *   [bar]: https://example.com
+ *   [mercury]: https://example.com/mercury/
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"label": "input", "name": "not-ok.md"}
  *
- *   1:1-1:27: Found unused definition
+ *   [mercury]: https://example.com/mercury/
+ *
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   1:1-1:40: Unexpected unused definition, expected no definition or one or more references to `mercury`
+ *
+ * @example
+ *   {"gfm": true, "label": "input", "name": "gfm.md"}
+ *
+ *   Mercury[^mercury] is a planet.
+ *
+ *   [^Mercury]:
+ *       **Mercury** is the first planet from the Sun and the smallest
+ *       in the Solar System.
+ *   [^Venus]:
+ *       **Venus** is the second planet from
+ *       the Sun.
+ * @example
+ *   {"gfm": true, "label": "output", "name": "gfm.md"}
+ *
+ *   6:1-8:13: Unexpected unused footnote definition, expected no definition or one or more footnote references to `venus`
  */
-const own$1 = {}.hasOwnProperty;
-const remarkLintNoUnusedDefinitions = lintRule(
+const remarkLintNoUnusedDefinitions = lintRule$1(
   {
     origin: 'remark-lint:no-unused-definitions',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-unused-definitions#readme'
   },
-  (tree, file) => {
-    const map = Object.create(null);
-    visit$1(tree, (node) => {
-      if (
-        (node.type === 'definition' || node.type === 'footnoteDefinition') &&
-        !generated(node)
-      ) {
-        map[node.identifier.toUpperCase()] = {node, used: false};
-      }
-    });
-    visit$1(tree, (node) => {
-      if (
-        node.type === 'imageReference' ||
-        node.type === 'linkReference' ||
-        node.type === 'footnoteReference'
-      ) {
-        const info = map[node.identifier.toUpperCase()];
-        if (!generated(node) && info) {
-          info.used = true;
+  function (tree, file) {
+    const footnoteDefinitions = new Map();
+    const definitions = new Map();
+    visitParents(tree, function (node, parents) {
+      if ('identifier' in node) {
+        const map =
+          node.type === 'footnoteDefinition' ||
+          node.type === 'footnoteReference'
+            ? footnoteDefinitions
+            : definitions;
+        let entry = map.get(node.identifier);
+        if (!entry) {
+          entry = {ancestors: undefined, used: false};
+          map.set(node.identifier, entry);
+        }
+        if (node.type === 'definition' || node.type === 'footnoteDefinition') {
+          entry.ancestors = [...parents, node];
+        } else if (
+          node.type === 'imageReference' ||
+          node.type === 'linkReference' ||
+          node.type === 'footnoteReference'
+        ) {
+          entry.used = true;
         }
       }
     });
-    let identifier;
-    for (identifier in map) {
-      if (own$1.call(map, identifier)) {
-        const entry = map[identifier];
-        if (!entry.used) {
-          file.message('Found unused definition', entry.node);
+    const entries = [...footnoteDefinitions.values(), ...definitions.values()];
+    for (const entry of entries) {
+      if (!entry.used) {
+        ok$1(entry.ancestors);
+        const node = entry.ancestors.at(-1);
+        ok$1(node.type === 'footnoteDefinition' || node.type === 'definition');
+        if (node.position) {
+          const prefix = node.type === 'footnoteDefinition' ? 'footnote ' : '';
+          file.message(
+            'Unexpected unused ' +
+              prefix +
+              'definition, expected no definition or one or more ' +
+              prefix +
+              'references to `' +
+              node.identifier +
+              '`',
+            {ancestors: entry.ancestors, place: node.position}
+          );
         }
       }
     }
   }
 );
-var remarkLintNoUnusedDefinitions$1 = remarkLintNoUnusedDefinitions;
+
+/**
+ * remark-lint rule to warn when ordered list markers are inconsistent.
+ *
+ * ## What is this?
+ *
+ * This package checks ordered list markers.
+ *
+ * ## When should I use this?
+ *
+ * You can use this package to check ordered lists.
+ *
+ * ## API
+ *
+ * ### `unified().use(remarkLintOrderedListMarkerStyle[, options])`
+ *
+ * Warn when ordered list markers are inconsistent.
+ *
+ * ###### Parameters
+ *
+ * * `options` ([`Options`][api-options], default: `'consistent'`)
+ *   — preferred style or whether to detect the first style and warn for
+ *   further differences
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ### `Options`
+ *
+ * Configuration (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Options = Style | 'consistent'
+ * ```
+ *
+ * ### `Style`
+ *
+ * Style (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Style = '.' | ')'
+ * ```
+ *
+ * ## Recommendation
+ *
+ * Parens for list markers were not supported in markdown before CommonMark.
+ * While they should work in most places now,
+ * not all markdown parsers follow CommonMark.
+ * So it’s recommended to prefer dots.
+ *
+ * ## Fix
+ *
+ * [`remark-stringify`][github-remark-stringify] formats ordered lists with
+ * dots by default.
+ * Pass `bulletOrdered: ')'` to always use parens.
+ *
+ * [api-style]: #style
+ * [api-options]: #options
+ * [api-remark-lint-ordered-list-marker-style]: #unifieduseremarklintorderedlistmarkerstyle-options
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
+ *
+ * @module ordered-list-marker-style
+ * @author Titus Wormer
+ * @copyright 2015 Titus Wormer
+ * @license MIT
+ *
+ * @example
+ *   {"name": "ok.md"}
+ *
+ *   1. Mercury
+ *
+ *   * Venus
+ *
+ *   1. Earth
+ *
+ * @example
+ *   {"name": "ok.md", "config": "."}
+ *
+ *   1. Mercury
+ *
+ * @example
+ *   {"name": "ok.md", "config": ")"}
+ *
+ *   1) Mercury
+ *
+ * @example
+ *   {"label": "input", "name": "not-ok.md"}
+ *
+ *   1. Mercury
+ *
+ *   1) Venus
+ *
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   3:2: Unexpected ordered list marker `)`, expected `.`
+ *
+ * @example
+ *   {"name": "not-ok.md", "label": "output", "config": "🌍", "positionless": true}
+ *
+ *   1:1: Unexpected value `🌍` for `options`, expected `'.'`, `')'`, or `'consistent'`
+ */
+const remarkLintOrderedListMarkerStyle = lintRule$1(
+  {
+    origin: 'remark-lint:ordered-list-marker-style',
+    url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-ordered-list-marker-style#readme'
+  },
+  function (tree, file, options) {
+    const value = String(file);
+    let expected;
+    let cause;
+    if (options === null || options === undefined || options === 'consistent') ; else if (options === '.' || options === ')') {
+      expected = options;
+    } else {
+      file.fail(
+        'Unexpected value `' +
+          options +
+          "` for `options`, expected `'.'`, `')'`, or `'consistent'`"
+      );
+    }
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (node.type !== 'listItem') return
+      const parent = parents.at(-1);
+      if (!parent || parent.type !== 'list' || !parent.ordered) return
+      const start = pointStart(node);
+      if (start && typeof start.offset === 'number') {
+        let index = start.offset;
+        let code = value.charCodeAt(index);
+        while (asciiDigit(code)) {
+          index++;
+          code = value.charCodeAt(index);
+        }
+        const actual =
+          code === 41  ? ')' : code === 46  ? '.' : undefined;
+        if (!actual) return
+        const place = {
+          line: start.line,
+          column: start.column + (index - start.offset),
+          offset: start.offset + (index - start.offset)
+        };
+        if (expected) {
+          if (actual !== expected) {
+            file.message(
+              'Unexpected ordered list marker `' +
+                actual +
+                '`, expected `' +
+                expected +
+                '`',
+              {ancestors: [...parents, node], cause, place}
+            );
+          }
+        } else {
+          expected = actual;
+          cause = new VFileMessage(
+            'Ordered list marker style `' +
+              expected +
+              "` first defined for `'consistent'` here",
+            {
+              ancestors: [...parents, node],
+              place,
+              ruleId: 'ordered-list-marker-style',
+              source: 'remark-lint'
+            }
+          );
+        }
+      }
+    });
+  }
+);
 
 const remarkPresetLintRecommended = {
   plugins: [
     remarkLint,
-    remarkLintFinalNewline$1,
-    remarkLintListItemBulletIndent$1,
-    [remarkLintListItemIndent$1, 'tab-size'],
-    remarkLintNoBlockquoteWithoutMarker$1,
-    remarkLintNoLiteralUrls$1,
-    [remarkLintOrderedListMarkerStyle$1, '.'],
-    remarkLintHardBreakSpaces$1,
-    remarkLintNoDuplicateDefinitions$1,
-    remarkLintNoHeadingContentIndent$1,
-    remarkLintNoInlinePadding$1,
-    remarkLintNoShortcutReferenceImage$1,
-    remarkLintNoShortcutReferenceLink$1,
-    remarkLintNoUndefinedReferences$1,
-    remarkLintNoUnusedDefinitions$1
+    remarkLintFinalNewline,
+    remarkLintListItemBulletIndent,
+    [remarkLintListItemIndent, 'one'],
+    remarkLintNoBlockquoteWithoutMarker,
+    remarkLintNoLiteralUrls,
+    [remarkLintOrderedListMarkerStyle, '.'],
+    remarkLintHardBreakSpaces,
+    remarkLintNoDuplicateDefinitions,
+    remarkLintNoHeadingContentIndent,
+    remarkLintNoShortcutReferenceImage,
+    remarkLintNoShortcutReferenceLink,
+    remarkLintNoUndefinedReferences,
+    remarkLintNoUnusedDefinitions
   ]
 };
-var remarkPresetLintRecommended$1 = remarkPresetLintRecommended;
 
 /**
+ * remark-lint rule to warn when block quotes are indented too much or
+ * too little.
+ *
+ * ## What is this?
+ *
+ * This package checks the “indent” of block quotes: the `>` (greater than)
+ * marker *and* the spaces before content.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that the “indent” of block quotes is
- * consistent.
- * Indent here is the `>` (greater than) marker and the spaces before content.
+ * You can use this rule to check markdown code style.
  *
  * ## API
  *
- * The following options (default: `'consistent'`) are accepted:
+ * ### `unified().use(remarkLintBlockquoteIndentation[, options])`
  *
- * *   `number` (example: `2`)
- *     — preferred indent of `>` and spaces before content
- * *   `'consistent'`
- *     — detect the first used style and warn when further block quotes differ
+ * Warn when block quotes are indented too much or too little.
+ *
+ * ###### Parameters
+ *
+ * * `options` ([`Options`][api-options], default: `'consistent'`)
+ *   — either a preferred indent or whether to detect the first style
+ *   and warn for further differences
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ### `Options`
+ *
+ * Configuration (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Options = number | 'consistent'
+ * ```
  *
  * ## Recommendation
  *
@@ -14123,245 +14190,376 @@ var remarkPresetLintRecommended$1 = remarkPresetLintRecommended;
  *
  * Due to this, it’s recommended to configure this rule with `2`.
  *
+ * [api-options]: #options
+ * [api-remark-lint-blockquote-indentation]: #unifieduseremarklintblockquoteindentation-options
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
+ *
  * @module blockquote-indentation
- * @summary
- *   remark-lint rule to warn when block quotes are indented too much or
- *   too little.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
- * @example
- *   {"name": "ok.md", "config": 4}
- *
- *   >   Hello
- *
- *   Paragraph.
- *
- *   >   World
- * @example
- *   {"name": "ok.md", "config": 2}
- *
- *   > Hello
- *
- *   Paragraph.
- *
- *   > World
  *
  * @example
- *   {"name": "not-ok.md", "label": "input"}
+ *   {"config": 2, "name": "ok-2.md"}
  *
- *   >  Hello
+ *   > Mercury.
  *
- *   Paragraph.
+ *   Venus.
  *
- *   >   World
- *
- *   Paragraph.
- *
- *   > World
+ *   > Earth.
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"config": 4, "name": "ok-4.md"}
  *
- *   5:5: Remove 1 space between block quote and content
- *   9:3: Add 1 space between block quote and content
+ *   >   Mercury.
+ *
+ *   Venus.
+ *
+ *   >   Earth.
+ *
+ * @example
+ *   { "name": "ok-tab.md"}
+ *
+ *   >␉Mercury.
+ *
+ * @example
+ *   {"label": "input", "name": "not-ok.md"}
+ *
+ *   >  Mercury.
+ *
+ *   Venus.
+ *
+ *   >   Earth.
+ *
+ *   Mars.
+ *
+ *   > Jupiter
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   5:5: Unexpected `4` spaces between block quote marker and content, expected `3` spaces, remove `1` space
+ *   9:3: Unexpected `2` spaces between block quote marker and content, expected `3` spaces, add `1` space
+ *
+ * @example
+ *   {"config": "🌍", "label": "output", "name": "not-ok-options.md", "positionless": true}
+ *
+ *   1:1: Unexpected value `🌍` for `options`, expected `number` or `'consistent'`
  */
-const remarkLintBlockquoteIndentation = lintRule(
+const remarkLintBlockquoteIndentation = lintRule$1(
   {
     origin: 'remark-lint:blockquote-indentation',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-blockquote-indentation#readme'
   },
-  (tree, file, option = 'consistent') => {
-    visit$1(tree, 'blockquote', (node) => {
-      if (generated(node) || node.children.length === 0) {
-        return
+  function (tree, file, options) {
+    let expected;
+    if (options === null || options === undefined || options === 'consistent') ; else if (typeof options === 'number') {
+      expected = options;
+    } else {
+      file.fail(
+        'Unexpected value `' +
+          options +
+          "` for `options`, expected `number` or `'consistent'`"
+      );
+    }
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
       }
-      if (option === 'consistent') {
-        option = check$1(node);
-      } else {
-        const diff = option - check$1(node);
-        if (diff !== 0) {
-          const abs = Math.abs(diff);
-          file.message(
-            (diff > 0 ? 'Add' : 'Remove') +
-              ' ' +
-              abs +
-              ' ' +
-              plural('space', abs) +
-              ' between block quote and content',
-            pointStart(node.children[0])
-          );
+      if (node.type !== 'blockquote') return
+      const start = pointStart(node);
+      const headStart = pointStart(node.children[0]);
+      if (headStart && start) {
+        const actual = headStart.column - start.column;
+        if (expected) {
+          const difference = expected - actual;
+          const differenceAbsolute = Math.abs(difference);
+          if (difference !== 0) {
+            file.message(
+              'Unexpected `' +
+                actual +
+                '` ' +
+                pluralize('space', actual) +
+                ' between block quote marker and content, expected `' +
+                expected +
+                '` ' +
+                pluralize('space', expected) +
+                ', ' +
+                (difference > 0 ? 'add' : 'remove') +
+                ' `' +
+                differenceAbsolute +
+                '` ' +
+                pluralize('space', differenceAbsolute),
+              {ancestors: [...parents, node], place: headStart}
+            );
+          }
+        } else {
+          expected = actual;
         }
       }
     });
   }
 );
-var remarkLintBlockquoteIndentation$1 = remarkLintBlockquoteIndentation;
-function check$1(node) {
-  return pointStart(node.children[0]).column - pointStart(node).column
-}
 
 /**
+ * remark-lint rule to warn when list item checkboxes violate a given
+ * style.
+ *
+ * ## What is this?
+ *
+ * This package checks the character used in checkboxes.
+ *
  * ## When should I use this?
  *
  * You can use this package to check that the style of GFM tasklists is
  * consistent.
+ * Task lists are a GFM feature enabled with
+ * [`remark-gfm`][github-remark-gfm].
  *
  * ## API
  *
- * The following options (default: `'consistent'`) are accepted:
+ * ### `unified().use(remarkLintCheckboxCharacterStyle[, options])`
  *
- * *   `Object` with the following fields:
- *     *   `checked` (`'x'`, `'X'`, or `'consistent'`, default: `'consistent'`)
- *         — preferred character to use for checked checkboxes
- *     *   `unchecked` (`'·'` (a space), `'»'` (a tab), or `'consistent'`,
- *         default: `'consistent'`)
- *         — preferred character to use for unchecked checkboxes
- * *   `'consistent'`
- *     — detect the first used styles and warn when further checkboxes differ
+ * Warn when list item checkboxes violate a given style.
+ *
+ * ###### Parameters
+ *
+ * * `options` ([`Options`][api-options], default: `'consistent'`)
+ *   — either preferred values or whether to detect the first styles
+ *   and warn for further differences
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ### `Options`
+ *
+ * Configuration (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Options = Styles | 'consistent'
+ * ```
+ *
+ * ### `Styles`
+ *
+ * Styles (TypeScript type).
+ *
+ * ###### Fields
+ *
+ * * `checked` (`'X'`, `'x'`, or `'consistent'`, default: `'consistent'`)
+ *   — preferred style to use for checked checkboxes
+ * * `unchecked` (`'␉'` (a tab), `'␠'` (a space), or `'consistent'`, default:
+ *   `'consistent'`)
+ *   — preferred style to use for unchecked checkboxes
  *
  * ## Recommendation
  *
  * It’s recommended to set `options.checked` to `'x'` (a lowercase X) as it
- * prevents an extra keyboard press and `options.unchecked` to `'·'` (a space)
+ * prevents an extra keyboard press and `options.unchecked` to `'␠'` (a space)
  * to make all checkboxes align.
  *
  * ## Fix
  *
- * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
- * formats checked checkboxes using `'x'` (lowercase X) and unchecked checkboxes
- * using `'·'` (a space).
+ * [`remark-stringify`][github-remark-stringify] formats checked checkboxes
+ * using `'x'` (lowercase X) and unchecked checkboxes using `'␠'` (a space).
+ *
+ * [api-options]: #options
+ * [api-remark-lint-checkbox-character-style]: #unifieduseremarklintcheckboxcharacterstyle-options
+ * [api-styles]: #styles
+ * [github-remark-gfm]: https://github.com/remarkjs/remark-gfm
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module checkbox-character-style
- * @summary
- *   remark-lint rule to warn when list item checkboxes violate a given
- *   style.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
- * @example
- *   {"name": "ok.md", "config": {"checked": "x"}, "gfm": true}
- *
- *   - [x] List item
- *   - [x] List item
  *
  * @example
- *   {"name": "ok.md", "config": {"checked": "X"}, "gfm": true}
+ *   {"config": {"checked": "x"}, "gfm": true, "name": "ok-x.md"}
  *
- *   - [X] List item
- *   - [X] List item
+ *   - [x] Mercury.
+ *   - [x] Venus.
  *
  * @example
- *   {"name": "ok.md", "config": {"unchecked": " "}, "gfm": true}
+ *   {"config": {"checked": "X"}, "gfm": true, "name": "ok-x-upper.md"}
  *
- *   - [ ] List item
- *   - [ ] List item
- *   - [ ]··
+ *   - [X] Mercury.
+ *   - [X] Venus.
+ *
+ * @example
+ *   {"config": {"unchecked": " "}, "gfm": true, "name": "ok-space.md"}
+ *
+ *   - [ ] Mercury.
+ *   - [ ] Venus.
+ *   - [ ]␠␠
  *   - [ ]
  *
  * @example
- *   {"name": "ok.md", "config": {"unchecked": "\t"}, "gfm": true}
+ *   {"config": {"unchecked": "\t"}, "gfm": true, "name": "ok-tab.md"}
  *
- *   - [»] List item
- *   - [»] List item
- *
- * @example
- *   {"name": "not-ok.md", "label": "input", "gfm": true}
- *
- *   - [x] List item
- *   - [X] List item
- *   - [ ] List item
- *   - [»] List item
+ *   - [␉] Mercury.
+ *   - [␉] Venus.
  *
  * @example
- *   {"name": "not-ok.md", "label": "output", "gfm": true}
+ *   {"label": "input", "gfm": true, "name": "not-ok-default.md"}
  *
- *   2:5: Checked checkboxes should use `x` as a marker
- *   4:5: Unchecked checkboxes should use ` ` as a marker
+ *   - [x] Mercury.
+ *   - [X] Venus.
+ *   - [ ] Earth.
+ *   - [␉] Mars.
+ * @example
+ *   {"label": "output", "gfm": true, "name": "not-ok-default.md"}
+ *
+ *   2:5: Unexpected checked checkbox value `X`, expected `x`
+ *   4:5: Unexpected unchecked checkbox value `\t`, expected ` `
  *
  * @example
- *   {"config": {"unchecked": "💩"}, "name": "not-ok.md", "label": "output", "positionless": true, "gfm": true}
+ *   {"config": "🌍", "label": "output", "name": "not-ok-option.md", "positionless": true}
  *
- *   1:1: Incorrect unchecked checkbox marker `💩`: use either `'\t'`, or `' '`
+ *   1:1: Unexpected value `🌍` for `options`, expected an object or `'consistent'`
  *
  * @example
- *   {"config": {"checked": "💩"}, "name": "not-ok.md", "label": "output", "positionless": true, "gfm": true}
+ *   {"config": {"unchecked": "🌍"}, "label": "output", "name": "not-ok-option-unchecked.md", "positionless": true}
  *
- *   1:1: Incorrect checked checkbox marker `💩`: use either `'x'`, or `'X'`
+ *   1:1: Unexpected value `🌍` for `options.unchecked`, expected `'\t'`, `' '`, or `'consistent'`
+ *
+ * @example
+ *   {"config": {"checked": "🌍"}, "label": "output", "name": "not-ok-option-checked.md", "positionless": true}
+ *
+ *   1:1: Unexpected value `🌍` for `options.checked`, expected `'X'`, `'x'`, or `'consistent'`
  */
-const remarkLintCheckboxCharacterStyle = lintRule(
+const remarkLintCheckboxCharacterStyle = lintRule$1(
   {
     origin: 'remark-lint:checkbox-character-style',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-checkbox-character-style#readme'
   },
-  (tree, file, option = 'consistent') => {
+  function (tree, file, options) {
     const value = String(file);
-    let checked = 'consistent';
-    let unchecked = 'consistent';
-    if (typeof option === 'object') {
-      checked = option.checked || 'consistent';
-      unchecked = option.unchecked || 'consistent';
-    }
-    if (unchecked !== 'consistent' && unchecked !== ' ' && unchecked !== '\t') {
+    let checkedExpected;
+    let checkedConsistentCause;
+    let uncheckedExpected;
+    let uncheckedConsistentCause;
+    if (options === null || options === undefined || options === 'consistent') ; else if (typeof options === 'object') {
+      if (options.checked === 'X' || options.checked === 'x') {
+        checkedExpected = options.checked;
+      } else if (options.checked && options.checked !== 'consistent') {
+        file.fail(
+          'Unexpected value `' +
+            options.checked +
+            "` for `options.checked`, expected `'X'`, `'x'`, or `'consistent'`"
+        );
+      }
+      if (options.unchecked === '\t' || options.unchecked === ' ') {
+        uncheckedExpected = options.unchecked;
+      } else if (options.unchecked && options.unchecked !== 'consistent') {
+        file.fail(
+          'Unexpected value `' +
+            options.unchecked +
+            "` for `options.unchecked`, expected `'\\t'`, `' '`, or `'consistent'`"
+        );
+      }
+    } else {
       file.fail(
-        'Incorrect unchecked checkbox marker `' +
-          unchecked +
-          "`: use either `'\\t'`, or `' '`"
+        'Unexpected value `' +
+          options +
+          "` for `options`, expected an object or `'consistent'`"
       );
     }
-    if (checked !== 'consistent' && checked !== 'x' && checked !== 'X') {
-      file.fail(
-        'Incorrect checked checkbox marker `' +
-          checked +
-          "`: use either `'x'`, or `'X'`"
-      );
-    }
-    visit$1(tree, 'listItem', (node) => {
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (node.type !== 'listItem') return
       const head = node.children[0];
-      const point = pointStart(head);
+      const headStart = pointStart(head);
       if (
-        typeof node.checked !== 'boolean' ||
         !head ||
-        typeof point.offset !== 'number'
+        !headStart ||
+        typeof node.checked !== 'boolean' ||
+        typeof headStart.offset !== 'number'
       ) {
         return
       }
-      point.offset -= 2;
-      point.column -= 2;
+      headStart.offset -= 2;
+      headStart.column -= 2;
       const match = /\[([\t Xx])]/.exec(
-        value.slice(point.offset - 2, point.offset + 1)
+        value.slice(headStart.offset - 2, headStart.offset + 1)
       );
       if (!match) return
-      const style = node.checked ? checked : unchecked;
-      if (style === 'consistent') {
+      const actual = match[1];
+      const actualDisplay = actual === '\t' ? '\\t' : actual;
+      const expected = node.checked ? checkedExpected : uncheckedExpected;
+      const expectedDisplay = expected === '\t' ? '\\t' : expected;
+      if (!expected) {
+        const cause = new VFileMessage(
+          (node.checked ? 'C' : 'Unc') +
+            "hecked checkbox style `'" +
+            actualDisplay +
+            "'` first defined for `'consistent'` here",
+          {
+            ancestors: [...parents, node],
+            place: headStart,
+            ruleId: 'checkbox-character-style',
+            source: 'remark-lint'
+          }
+        );
         if (node.checked) {
-          checked = match[1];
+          checkedExpected =  (actual);
+          checkedConsistentCause = cause;
         } else {
-          unchecked = match[1];
+          uncheckedExpected =  (actual);
+          uncheckedConsistentCause = cause;
         }
-      } else if (match[1] !== style) {
+      } else if (actual !== expected) {
         file.message(
-          (node.checked ? 'Checked' : 'Unchecked') +
-            ' checkboxes should use `' +
-            style +
-            '` as a marker',
-          point
+          'Unexpected ' +
+            (node.checked ? '' : 'un') +
+            'checked checkbox value `' +
+            actualDisplay +
+            '`, expected `' +
+            expectedDisplay +
+            '`',
+          {
+            ancestors: [...parents, node],
+            cause: node.checked
+              ? checkedConsistentCause
+              : uncheckedConsistentCause,
+            place: headStart
+          }
         );
       }
     });
   }
 );
-var remarkLintCheckboxCharacterStyle$1 = remarkLintCheckboxCharacterStyle;
 
 /**
+ * remark-lint rule to warn when GFM tasklist checkboxes are followed by
+ * more than one space.
+ *
+ * ## What is this?
+ *
+ * This package checks the space after checkboxes.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that the “indent” after a GFM tasklist
- * checkbox is a single space.
+ * You can use this package to check that the style of GFM tasklists is
+ * a single space.
  *
  * ## API
  *
- * There are no accepted options.
+ * ### `unified().use(remarkLintCheckboxContentIndent)`
+ *
+ * Warn when GFM tasklist checkboxes are followed by more than one space.
+ *
+ * ###### Parameters
+ *
+ * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
@@ -14382,335 +14580,510 @@ var remarkLintCheckboxCharacterStyle$1 = remarkLintCheckboxCharacterStyle;
  *
  * ## Fix
  *
- * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
- * formats checkboxes and the content after them with a single space between.
+ * [`remark-stringify`][github-remark-stringify] formats checkboxes and the
+ * content after them with a single space between.
+ *
+ * [api-remark-lint-checkbox-content-indent]: #unifieduseremarklintcheckboxcontentindent
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module checkbox-content-indent
- * @summary
- *   remark-lint rule to warn when GFM tasklist checkboxes are followed by
- *   more than one space.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
- * @example
- *   {"name": "ok.md", "gfm": true}
- *
- *   - [ ] List item
- *   +  [x] List Item
- *   *   [X] List item
- *   -    [ ] List item
  *
  * @example
- *   {"name": "not-ok.md", "label": "input", "gfm": true}
+ *   {"gfm": true, "name": "ok.md"}
  *
- *   - [ ] List item
- *   + [x]  List item
- *   * [X]   List item
- *   - [ ]    List item
+ *   - [ ] Mercury.
+ *   +  [x] Venus.
+ *   *   [X] Earth.
+ *   -    [ ] Mars.
  *
  * @example
- *   {"name": "not-ok.md", "label": "output", "gfm": true}
+ *   {"gfm": true, "label": "input", "name": "not-ok.md"}
  *
- *   2:7-2:8: Checkboxes should be followed by a single character
- *   3:7-3:9: Checkboxes should be followed by a single character
- *   4:7-4:10: Checkboxes should be followed by a single character
+ *   - [ ] Mercury.
+ *   + [x]  Venus.
+ *   * [X]   Earth.
+ *   - [ ]    Mars.
+ * @example
+ *   {"gfm": true, "label": "output", "name": "not-ok.md"}
+ *
+ *   2:8: Unexpected `2` spaces between checkbox and content, expected `1` space, remove `1` space
+ *   3:9: Unexpected `3` spaces between checkbox and content, expected `1` space, remove `2` spaces
+ *   4:10: Unexpected `4` spaces between checkbox and content, expected `1` space, remove `3` spaces
+ *
+ * @example
+ *   {"gfm": true, "label": "input", "name": "tab.md"}
+ *
+ *   - [ ]␉Mercury.
+ *   + [x]␉␉Venus.
+ * @example
+ *   {"gfm": true, "label": "output", "name": "tab.md"}
+ *
+ *   2:8: Unexpected `2` spaces between checkbox and content, expected `1` space, remove `1` space
  */
-const remarkLintCheckboxContentIndent = lintRule(
+const remarkLintCheckboxContentIndent = lintRule$1(
   {
     origin: 'remark-lint:checkbox-content-indent',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-checkbox-content-indent#readme'
   },
-  (tree, file) => {
+  function (tree, file) {
     const value = String(file);
-    const loc = location(file);
-    visit$1(tree, 'listItem', (node) => {
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (node.type !== 'listItem') return
       const head = node.children[0];
-      const point = pointStart(head);
+      const headStart = pointStart(head);
       if (
-        typeof node.checked !== 'boolean' ||
         !head ||
-        typeof point.offset !== 'number'
+        !headStart ||
+        typeof node.checked !== 'boolean' ||
+        typeof headStart.offset !== 'number'
       ) {
         return
       }
       const match = /\[([\t xX])]/.exec(
-        value.slice(point.offset - 4, point.offset + 1)
+        value.slice(headStart.offset - 4, headStart.offset + 1)
       );
       if (!match) return
-      const initial = point.offset;
-      let final = initial;
-      while (/[\t ]/.test(value.charAt(final))) final++;
-      if (final - initial > 0) {
-        file.message('Checkboxes should be followed by a single character', {
-          start: loc.toPoint(initial),
-          end: loc.toPoint(final)
-        });
+      let final = headStart.offset;
+      let code = value.charCodeAt(final);
+      while (code === 9 || code === 32) {
+        final++;
+        code = value.charCodeAt(final);
+      }
+      const size = final - headStart.offset;
+      if (size) {
+        file.message(
+          'Unexpected `' +
+            (size + 1) +
+            '` ' +
+            pluralize('space', size + 1) +
+            ' between checkbox and content, expected `1` space, remove `' +
+            size +
+            '` ' +
+            pluralize('space', size),
+          {
+            ancestors: [...parents, node],
+            place: {
+              line: headStart.line,
+              column: headStart.column + size,
+              offset: headStart.offset + size
+            }
+          }
+        );
       }
     });
   }
 );
-var remarkLintCheckboxContentIndent$1 = remarkLintCheckboxContentIndent;
 
 /**
+ * remark-lint rule to warn when code blocks violate a given style.
+ *
+ * ## What is this?
+ *
+ * This package checks the style of code blocks.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that code blocks are consistent.
+ * You can use this package to check that the style of code blocks is
+ * consistent.
  *
  * ## API
  *
- * The following options (default: `'consistent'`) are accepted:
+ * ### `unified().use(remarkLintCodeBlockStyle[, options])`
  *
- * *   `'fenced'`
- *     — prefer fenced code blocks:
- *     ````markdown
- *     ```js
- *     code()
- *     ```
- *     ````
- * *   `'indented'`
- *     — prefer indented code blocks:
- *     ```markdown
- *         code()
- *     ```
- * *   `'consistent'`
- *     — detect the first used style and warn when further code blocks differ
+ * Warn when code blocks violate a given style.
+ *
+ * ###### Parameters
+ *
+ * * `options` ([`Options`][api-options], default: `'consistent'`)
+ *   — preferred style or whether to detect the first style and warn for
+ *   further differences
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ### `Options`
+ *
+ * Configuration (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Options = Style | 'consistent'
+ * ```
+ *
+ * ### `Style`
+ *
+ * Style (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Style = 'indented' | 'fenced'
+ * ```
  *
  * ## Recommendation
  *
- * Indentation in markdown is complex, especially because lists and indented
- * code can interfere in unexpected ways.
- * Fenced code has more features than indented code: importantly, specifying a
+ * Indentation in markdown is complex as lists and indented code interfere in
+ * unexpected ways.
+ * Fenced code has more features than indented code: it can specify a
  * programming language.
- * Since CommonMark took the idea of fenced code from GFM, fenced code became
- * widely supported.
+ * Since CommonMark took the idea of fenced code from GFM,
+ * fenced code became widely supported.
  * Due to this, it’s recommended to configure this rule with `'fenced'`.
  *
  * ## Fix
  *
- * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
- * formats code blocks as fenced code when they have a language flag and as
- * indented code otherwise.
- * Pass
- * [`fences: true`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify#optionsfences)
- * to always use fenced code.
+ * [`remark-stringify`][github-remark-stringify] always formats code blocks as
+ * fenced.
+ * Pass `fences: false` to only use fenced code blocks when they have a
+ * language and as indented code otherwise.
+ *
+ * [api-options]: #options
+ * [api-remark-lint-code-block-style]: #unifieduseremarklintcodeblockstyle-options
+ * [api-style]: #style
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module code-block-style
- * @summary
- *   remark-lint rule to warn when code blocks violate a given style.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
  *
  * @example
- *   {"config": "indented", "name": "ok.md"}
+ *   {"config": "indented", "name": "ok-indented.md"}
  *
- *       alpha()
+ *       venus()
  *
- *   Paragraph.
+ *   Mercury.
  *
- *       bravo()
- *
- * @example
- *   {"config": "indented", "name": "not-ok.md", "label": "input"}
- *
- *   ```
- *   alpha()
- *   ```
- *
- *   Paragraph.
- *
- *   ```
- *   bravo()
- *   ```
+ *       earth()
  *
  * @example
- *   {"config": "indented", "name": "not-ok.md", "label": "output"}
- *
- *   1:1-3:4: Code blocks should be indented
- *   7:1-9:4: Code blocks should be indented
- *
- * @example
- *   {"config": "fenced", "name": "ok.md"}
+ *   {"config": "fenced", "name": "ok-fenced.md"}
  *
  *   ```
- *   alpha()
+ *   venus()
  *   ```
  *
- *   Paragraph.
+ *   Mercury.
  *
  *   ```
- *   bravo()
+ *   earth()
  *   ```
  *
  * @example
- *   {"config": "fenced", "name": "not-ok-fenced.md", "label": "input"}
+ *   {"label": "input", "name": "not-ok-consistent.md"}
  *
- *       alpha()
+ *       venus()
  *
- *   Paragraph.
- *
- *       bravo()
- *
- * @example
- *   {"config": "fenced", "name": "not-ok-fenced.md", "label": "output"}
- *
- *   1:1-1:12: Code blocks should be fenced
- *   5:1-5:12: Code blocks should be fenced
- *
- * @example
- *   {"name": "not-ok-consistent.md", "label": "input"}
- *
- *       alpha()
- *
- *   Paragraph.
+ *   Mercury.
  *
  *   ```
- *   bravo()
+ *   earth()
+ *   ```
+ * @example
+ *   {"label": "output", "name": "not-ok-consistent.md"}
+ *
+ *   5:1-7:4: Unexpected fenced code block, expected indented code blocks
+ *
+ * @example
+ *   {"config": "indented", "label": "input", "name": "not-ok-indented.md"}
+ *
+ *   ```
+ *   venus()
  *   ```
  *
+ *   Mercury.
+ *
+ *   ```
+ *   earth()
+ *   ```
  * @example
- *   {"name": "not-ok-consistent.md", "label": "output"}
+ *   {"config": "indented", "label": "output", "name": "not-ok-indented.md"}
  *
- *   5:1-7:4: Code blocks should be indented
+ *   1:1-3:4: Unexpected fenced code block, expected indented code blocks
+ *   7:1-9:4: Unexpected fenced code block, expected indented code blocks
  *
  * @example
- *   {"config": "💩", "name": "not-ok-incorrect.md", "label": "output", "positionless": true}
+ *   {"config": "fenced", "label": "input", "name": "not-ok-fenced.md"}
  *
- *   1:1: Incorrect code block style `💩`: use either `'consistent'`, `'fenced'`, or `'indented'`
+ *       venus()
+ *
+ *   Mercury.
+ *
+ *       earth()
+ *
+ * @example
+ *   {"config": "fenced", "label": "output", "name": "not-ok-fenced.md"}
+ *
+ *   1:1-1:12: Unexpected indented code block, expected fenced code blocks
+ *   5:1-5:12: Unexpected indented code block, expected fenced code blocks
+ *
+ * @example
+ *   {"config": "🌍", "label": "output", "name": "not-ok-options.md", "positionless": true}
+ *
+ *   1:1: Unexpected value `🌍` for `options`, expected `'fenced'`, `'indented'`, or `'consistent'`
  */
-const remarkLintCodeBlockStyle = lintRule(
+const remarkLintCodeBlockStyle = lintRule$1(
   {
     origin: 'remark-lint:code-block-style',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-code-block-style#readme'
   },
-  (tree, file, option = 'consistent') => {
+  function (tree, file, options) {
     const value = String(file);
-    if (
-      option !== 'consistent' &&
-      option !== 'fenced' &&
-      option !== 'indented'
-    ) {
+    let cause;
+    let expected;
+    if (options === null || options === undefined || options === 'consistent') ; else if (options === 'indented' || options === 'fenced') {
+      expected = options;
+    } else {
       file.fail(
-        'Incorrect code block style `' +
-          option +
-          "`: use either `'consistent'`, `'fenced'`, or `'indented'`"
+        'Unexpected value `' +
+          options +
+          "` for `options`, expected `'fenced'`, `'indented'`, or `'consistent'`"
       );
     }
-    visit$1(tree, 'code', (node) => {
-      if (generated(node)) {
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (node.type !== 'code') return
+      const end = pointEnd(node);
+      const start = pointStart(node);
+      if (
+        !start ||
+        !end ||
+        typeof start.offset !== 'number' ||
+        typeof end.offset !== 'number'
+      ) {
         return
       }
-      const initial = pointStart(node).offset;
-      const final = pointEnd(node).offset;
-      const current =
-        node.lang || /^\s*([~`])\1{2,}/.test(value.slice(initial, final))
+      const actual =
+        node.lang || /^ {0,3}([`~])/.test(value.slice(start.offset, end.offset))
           ? 'fenced'
           : 'indented';
-      if (option === 'consistent') {
-        option = current;
-      } else if (option !== current) {
-        file.message('Code blocks should be ' + option, node);
+      if (expected) {
+        if (expected !== actual) {
+          file.message(
+            'Unexpected ' +
+              actual +
+              ' code block, expected ' +
+              expected +
+              ' code blocks',
+            {ancestors: [...parents, node], cause, place: {start, end}}
+          );
+        }
+      } else {
+        expected = actual;
+        cause = new VFileMessage(
+          "Code block style `'" +
+            actual +
+            "'` first defined for `'consistent'` here",
+          {
+            ancestors: [...parents, node],
+            place: {start, end},
+            source: 'remark-lint',
+            ruleId: 'code-block-style'
+          }
+        );
       }
     });
   }
 );
-var remarkLintCodeBlockStyle$1 = remarkLintCodeBlockStyle;
 
 /**
+ * remark-lint rule to warn when consecutive whitespace is used in
+ * a definition label.
+ *
+ * ## What is this?
+ *
+ * This package checks the whitepsace in definition labels.
+ *
+ * GFM footnotes are not affected by this rule as footnote labels cannot
+ * contain whitespace.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that the labels used in definitions
- * do not use meaningless white space.
+ * You can use this package to check that definition labels are consistent.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintDefinitionSpacing)`
+ *
+ * Warn when consecutive whitespace is used in a definition label.
+ *
+ * ###### Parameters
+ *
  * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
- * Definitions and references are matched together by collapsing white space.
- * Using more white space in labels might incorrectly indicate that they are of
+ * Definitions and references are matched together by collapsing whitespace.
+ * Using more whitespace in labels might incorrectly indicate that they are of
  * importance.
- * Due to this, it’s recommended to use one space (or a line ending if needed)
- * and turn this rule on.
+ * Due to this, it’s recommended to use one space and turn this rule on.
+ *
+ * [api-remark-lint-definition-spacing]: #unifieduseremarklintdefinitionspacing
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module definition-spacing
- * @summary
- *   remark-lint rule to warn when consecutive whitespace is used in
- *   a definition label.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "ok.md"}
  *
- *   [example domain]: http://example.com "Example Domain"
+ *   The first planet is [planet mercury][].
+ *
+ *   [planet mercury]: http://example.com
  *
  * @example
- *   {"name": "not-ok.md", "label": "input"}
+ *   {"label": "input", "name": "not-ok-consecutive.md"}
  *
- *   [example····domain]: http://example.com "Example Domain"
+ *   [planet␠␠␠␠mercury]: http://example.com
+ * @example
+ *   {"label": "output", "name": "not-ok-consecutive.md"}
+ *
+ *   1:1-1:40: Unexpected `4` consecutive spaces in definition label, expected `1` space, remove `3` spaces
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"label": "input", "name": "not-ok-non-space.md"}
  *
- *   1:1-1:57: Do not use consecutive whitespace in definition labels
+ *   [pla␉net␊mer␍cury]: http://e.com
+ * @example
+ *   {"label": "output", "name": "not-ok-non-space.md"}
+ *
+ *   1:1-3:20: Unexpected non-space whitespace character `\t` in definition label, expected `1` space, replace it
+ *   1:1-3:20: Unexpected non-space whitespace character `\n` in definition label, expected `1` space, replace it
+ *   1:1-3:20: Unexpected non-space whitespace character `\r` in definition label, expected `1` space, replace it
  */
-const label = /^\s*\[((?:\\[\s\S]|[^[\]])+)]/;
-const remarkLintDefinitionSpacing = lintRule(
+const remarkLintDefinitionSpacing = lintRule$1(
   {
     origin: 'remark-lint:definition-spacing',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-definition-spacing#readme'
   },
-  (tree, file) => {
-    const value = String(file);
-    visit$1(tree, (node) => {
-      if (node.type === 'definition' || node.type === 'footnoteDefinition') {
-        const start = pointStart(node).offset;
-        const end = pointEnd(node).offset;
-        if (typeof start === 'number' && typeof end === 'number') {
-          const match = value.slice(start, end).match(label);
-          if (match && /[ \t\n]{2,}/.test(match[1])) {
-            file.message(
-              'Do not use consecutive whitespace in definition labels',
-              node
-            );
-          }
+  function (tree, file) {
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (node.type === 'definition' && node.position && node.label) {
+        const size = longestStreak(node.label, ' ');
+        if (size > 1) {
+          file.message(
+            'Unexpected `' +
+              size +
+              '` consecutive spaces in definition label, expected `1` space, remove `' +
+              (size - 1) +
+              '` ' +
+              pluralize('space', size - 1),
+            {ancestors: [...parents, node], place: node.position}
+          );
+        }
+        const disallowed = [];
+        if (node.label.includes('\t')) disallowed.push('\\t');
+        if (node.label.includes('\n')) disallowed.push('\\n');
+        if (node.label.includes('\r')) disallowed.push('\\r');
+        for (const disallow of disallowed) {
+          file.message(
+            'Unexpected non-space whitespace character `' +
+              disallow +
+              '` in definition label, expected `1` space, replace it',
+            {ancestors: [...parents, node], place: node.position}
+          );
         }
       }
     });
   }
 );
-var remarkLintDefinitionSpacing$1 = remarkLintDefinitionSpacing;
+
+const quotation =
+  (
+    function (value, open, close) {
+      const start = open ;
+      const end = start;
+      let index = -1;
+      if (Array.isArray(value)) {
+        const list =  (value);
+        const result = [];
+        while (++index < list.length) {
+          result[index] = start + list[index] + end;
+        }
+        return result
+      }
+      if (typeof value === 'string') {
+        return start + value + end
+      }
+      throw new TypeError('Expected string or array of strings')
+    }
+  );
 
 /**
+ * remark-lint rule to warn when language flags of fenced code
+ * are not used.
+ *
+ * ## What is this?
+ *
+ * This package checks the language flags of fenced code blocks,
+ * whether they exist,
+ * and optionally what values they hold.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that language flags of fenced code
- * are used and consistent.
+ * You can use this package to check that the style of language flags of fenced
+ * code blocks is consistent.
  *
  * ## API
  *
- * The following options (default: `undefined`) are accepted:
+ * ### `unified().use(remarkLintFencedCodeFlag[, options])`
  *
- * *   `Array<string>`
- *     — as if passing `{flags: options}`
- * *   `Object` with the following fields:
- *     *   `allowEmpty` (`boolean`, default: `false`)
- *         — allow language flags to be omitted
- *     *   `flags` (`Array<string>` default: `[]`)
- *         — specific flags to allow (other flags will result in a warning)
+ * Warn when language flags of fenced code are not used.
+ *
+ * ###### Parameters
+ *
+ * * `options` ([`Options`][api-options] or `Array<string>`, optional)
+ *   — configuration or flags to allow
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ### `Options`
+ *
+ * Configuration (TypeScript type).
+ *
+ * ###### Fields
+ *
+ * * `allowEmpty` (`boolean`, default: `false`)
+ *   — allow language flags to be omitted
+ * * `flags` (`Array<string>`, optional)
+ *   — flags to allow,
+ *   other flags will result in a warning
  *
  * ## Recommendation
  *
- * While omitting the language flag is perfectly fine to signal that the code is
- * plain text, it *could* point to a mistake.
- * It’s recommended to instead use a certain flag for plain text (such as `txt`)
- * and to turn this rule on.
+ * While omitting language flags is fine to signal that code is plain text,
+ * it *could* point to a mistake.
+ * It’s recommended to instead use a certain flag for plain text (such as
+ * `txt`) and to turn this rule on.
+ *
+ * [api-options]: #options
+ * [api-remark-lint-fenced-code-flag]: #unifieduseremarklintfencedcodeflag-options
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module fenced-code-flag
- * @summary
- *   remark-lint rule to check that language flags of fenced code are used.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
@@ -14718,239 +15091,151 @@ var remarkLintDefinitionSpacing$1 = remarkLintDefinitionSpacing;
  * @example
  *   {"name": "ok.md"}
  *
- *   ```alpha
- *   bravo()
+ *   Some markdown:
+ *
+ *   ```markdown
+ *   # Mercury
  *   ```
  *
  * @example
- *   {"name": "not-ok.md", "label": "input"}
+ *   {"label": "input", "name": "not-ok.md"}
  *
  *   ```
- *   alpha()
+ *   mercury()
+ *   ```
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   1:1-3:4: Unexpected missing fenced code language flag in info string, expected keyword
+ *
+ * @example
+ *   {"config": {"allowEmpty": true}, "name": "ok-allow-empty.md"}
+ *
+ *   ```
+ *   mercury()
  *   ```
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
- *
- *   1:1-3:4: Missing code language flag
- *
- * @example
- *   {"name": "ok.md", "config": {"allowEmpty": true}}
+ *   {"config": {"allowEmpty": false}, "label": "input", "name": "not-ok-allow-empty.md"}
  *
  *   ```
- *   alpha()
+ *   mercury()
  *   ```
+ * @example
+ *   {"config": {"allowEmpty": false}, "label": "output", "name": "not-ok-allow-empty.md"}
+ *
+ *   1:1-3:4: Unexpected missing fenced code language flag in info string, expected keyword
  *
  * @example
- *   {"name": "not-ok.md", "config": {"allowEmpty": false}, "label": "input"}
+ *   {"config": ["markdown"], "name": "ok-array.md"}
  *
- *   ```
- *   alpha()
- *   ```
- *
- * @example
- *   {"name": "not-ok.md", "config": {"allowEmpty": false}, "label": "output"}
- *
- *   1:1-3:4: Missing code language flag
- *
- * @example
- *   {"name": "ok.md", "config": ["alpha"]}
- *
- *   ```alpha
- *   bravo()
+ *   ```markdown
+ *   # Mercury
  *   ```
  *
  * @example
- *   {"name": "ok.md", "config": {"flags":["alpha"]}}
+ *   {"config": {"flags":["markdown"]}, "name": "ok-options.md"}
  *
- *   ```alpha
- *   bravo()
+ *   ```markdown
+ *   # Mercury
  *   ```
  *
  * @example
- *   {"name": "not-ok.md", "config": ["charlie"], "label": "input"}
+ *   {"config": ["markdown"], "label": "input", "name": "not-ok-array.md"}
  *
- *   ```alpha
- *   bravo()
+ *   ```javascript
+ *   mercury()
  *   ```
+ * @example
+ *   {"config": ["markdown"], "label": "output", "name": "not-ok-array.md"}
+ *
+ *   1:1-3:4: Unexpected fenced code language flag `javascript` in info string, expected `markdown`
  *
  * @example
- *   {"name": "not-ok.md", "config": ["charlie"], "label": "output"}
+ *   {"config": ["javascript", "markdown", "mdx", "typescript"], "label": "input", "name": "not-ok-long-array.md"}
  *
- *   1:1-3:4: Incorrect code language flag
+ *   ```html
+ *   <h1>Mercury</h1>
+ *   ```
+ * @example
+ *   {"config": ["javascript", "markdown", "mdx", "typescript"], "label": "output", "name": "not-ok-long-array.md"}
+ *
+ *   1:1-3:4: Unexpected fenced code language flag `html` in info string, expected `javascript`, `markdown`, `mdx`, …
+ *
+ * @example
+ *   {"config": "🌍", "label": "output", "name": "not-ok-options.md", "positionless": true}
+ *
+ *   1:1: Unexpected value `🌍` for `options`, expected array or object
  */
 const fence = /^ {0,3}([~`])\1{2,}/;
-const remarkLintFencedCodeFlag = lintRule(
+const listFormat$1 = new Intl.ListFormat('en', {type: 'disjunction'});
+const listFormatUnit$1 = new Intl.ListFormat('en', {type: 'unit'});
+const remarkLintFencedCodeFlag = lintRule$1(
   {
     origin: 'remark-lint:fenced-code-flag',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-fenced-code-flag#readme'
   },
-  (tree, file, option) => {
+  function (tree, file, options) {
     const value = String(file);
     let allowEmpty = false;
-    let allowed = [];
-    if (typeof option === 'object') {
-      if (Array.isArray(option)) {
-        allowed = option;
+    let allowed;
+    if (options === null || options === undefined) ; else if (typeof options === 'object') {
+      if (Array.isArray(options)) {
+        const flags =  (options);
+        allowed = flags;
       } else {
-        allowEmpty = Boolean(option.allowEmpty);
-        if (option.flags) {
-          allowed = option.flags;
+        const settings =  (options);
+        allowEmpty = settings.allowEmpty === true;
+        if (settings.flags) {
+          allowed = settings.flags;
         }
       }
-    }
-    visit$1(tree, 'code', (node) => {
-      if (!generated(node)) {
-        if (node.lang) {
-          if (allowed.length > 0 && !allowed.includes(node.lang)) {
-            file.message('Incorrect code language flag', node);
-          }
-        } else {
-          const slice = value.slice(
-            pointStart(node).offset,
-            pointEnd(node).offset
-          );
-          if (!allowEmpty && fence.test(slice)) {
-            file.message('Missing code language flag', node);
-          }
-        }
-      }
-    });
-  }
-);
-var remarkLintFencedCodeFlag$1 = remarkLintFencedCodeFlag;
-
-/**
- * ## When should I use this?
- *
- * You can use this package to check that fenced code markers are consistent.
- *
- * ## API
- *
- * The following options (default: `'consistent'`) are accepted:
- *
- * *   ``'`'``
- *     — prefer grave accents
- * *   `'~'`
- *     — prefer tildes
- * *   `'consistent'`
- *     — detect the first used style and warn when further fenced code differs
- *
- * ## Recommendation
- *
- * Tildes are extremely uncommon.
- * Due to this, it’s recommended to configure this rule with ``'`'``.
- *
- * ## Fix
- *
- * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
- * formats fenced code with grave accents by default.
- * Pass
- * [`fence: '~'`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify#optionsfence)
- * to always use tildes.
- *
- * @module fenced-code-marker
- * @summary
- *   remark-lint rule to warn when fenced code markers are inconsistent.
- * @author Titus Wormer
- * @copyright 2015 Titus Wormer
- * @license MIT
- * @example
- *   {"name": "ok.md"}
- *
- *   Indented code blocks are not affected by this rule:
- *
- *       bravo()
- *
- * @example
- *   {"name": "ok.md", "config": "`"}
- *
- *   ```alpha
- *   bravo()
- *   ```
- *
- *   ```
- *   charlie()
- *   ```
- *
- * @example
- *   {"name": "ok.md", "config": "~"}
- *
- *   ~~~alpha
- *   bravo()
- *   ~~~
- *
- *   ~~~
- *   charlie()
- *   ~~~
- *
- * @example
- *   {"name": "not-ok-consistent-tick.md", "label": "input"}
- *
- *   ```alpha
- *   bravo()
- *   ```
- *
- *   ~~~
- *   charlie()
- *   ~~~
- *
- * @example
- *   {"name": "not-ok-consistent-tick.md", "label": "output"}
- *
- *   5:1-7:4: Fenced code should use `` ` `` as a marker
- *
- * @example
- *   {"name": "not-ok-consistent-tilde.md", "label": "input"}
- *
- *   ~~~alpha
- *   bravo()
- *   ~~~
- *
- *   ```
- *   charlie()
- *   ```
- *
- * @example
- *   {"name": "not-ok-consistent-tilde.md", "label": "output"}
- *
- *   5:1-7:4: Fenced code should use `~` as a marker
- *
- * @example
- *   {"name": "not-ok-incorrect.md", "config": "💩", "label": "output", "positionless": true}
- *
- *   1:1: Incorrect fenced code marker `💩`: use either `'consistent'`, `` '`' ``, or `'~'`
- */
-const remarkLintFencedCodeMarker = lintRule(
-  {
-    origin: 'remark-lint:fenced-code-marker',
-    url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-fenced-code-marker#readme'
-  },
-  (tree, file, option = 'consistent') => {
-    const contents = String(file);
-    if (option !== 'consistent' && option !== '~' && option !== '`') {
+    } else {
       file.fail(
-        'Incorrect fenced code marker `' +
-          option +
-          "`: use either `'consistent'`, `` '`' ``, or `'~'`"
+        'Unexpected value `' +
+          options +
+          '` for `options`, expected array or object'
       );
     }
-    visit$1(tree, 'code', (node) => {
-      const start = pointStart(node).offset;
-      if (typeof start === 'number') {
-        const marker = contents
-          .slice(start, start + 4)
-          .replace(/^\s+/, '')
-          .charAt(0);
-        if (marker === '~' || marker === '`') {
-          if (option === 'consistent') {
-            option = marker;
-          } else if (marker !== option) {
+    let allowedDisplay;
+    if (allowed) {
+      allowedDisplay =
+        allowed.length > 3
+          ? listFormatUnit$1.format([...quotation(allowed.slice(0, 3), '`'), '…'])
+          : listFormat$1.format(quotation(allowed, '`'));
+    } else {
+      allowedDisplay = 'keyword';
+    }
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (node.type !== 'code') return
+      const end = pointEnd(node);
+      const start = pointStart(node);
+      if (
+        end &&
+        start &&
+        typeof end.offset === 'number' &&
+        typeof start.offset === 'number'
+      ) {
+        if (node.lang) {
+          if (allowed && !allowed.includes(node.lang)) {
             file.message(
-              'Fenced code should use `' +
-                (option === '~' ? option : '` ` `') +
-                '` as a marker',
-              node
+              'Unexpected fenced code language flag `' +
+                node.lang +
+                '` in info string, expected ' +
+                allowedDisplay,
+              {ancestors: [...parents, node], place: node.position}
+            );
+          }
+        } else if (!allowEmpty) {
+          const slice = value.slice(start.offset, end.offset);
+          if (fence.test(slice)) {
+            file.message(
+              'Unexpected missing fenced code language flag in info string, expected ' +
+                allowedDisplay,
+              {ancestors: [...parents, node], place: node.position}
             );
           }
         }
@@ -14958,22 +15243,248 @@ const remarkLintFencedCodeMarker = lintRule(
     });
   }
 );
-var remarkLintFencedCodeMarker$1 = remarkLintFencedCodeMarker;
 
 /**
+ * remark-lint rule to warn when fenced code markers are
+ * inconsistent.
+ *
+ * ## What is this?
+ *
+ * This package checks fenced code block markers.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that file extensions are `md`.
+ * You can use this package to check that fenced code block markers are
+ * consistent.
  *
  * ## API
  *
- * The following options (default: `'md'`) are accepted:
+ * ### `unified().use(remarkLintFencedCodeMarker[, options])`
  *
- * *   `string` (example `'markdown'`)
- *     — preferred file extension (no dot)
+ * Warn when fenced code markers are inconsistent.
  *
- * > 👉 **Note**: does not warn when files have no file extensions (such as
- * > `AUTHORS` or `LICENSE`).
+ * ###### Parameters
+ *
+ * * `options` ([`Options`][api-options], default: `'consistent'`)
+ *   — preferred style or whether to detect the first style and warn for
+ *   further differences
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ### `Marker`
+ *
+ * Marker (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Marker = '`' | '~'
+ * ```
+ *
+ * ### `Options`
+ *
+ * Configuration (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Options = Marker | 'consistent'
+ * ```
+ *
+ * ## Recommendation
+ *
+ * Tildes are uncommon.
+ * So it’s recommended to configure this rule with ``'`'``.
+ *
+ * ## Fix
+ *
+ * [`remark-stringify`][github-remark-stringify] formats fenced code with grave
+ * accents by default.
+ * Pass `fence: '~'` to always use tildes.
+ *
+ * [api-marker]: #marker
+ * [api-options]: #options
+ * [api-remark-lint-fenced-code-marker]: #unifieduseremarklintfencedcodemarker-options
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
+ *
+ * @module fenced-code-marker
+ * @author Titus Wormer
+ * @copyright 2015 Titus Wormer
+ * @license MIT
+ *
+ * @example
+ *   {"name": "ok-indented.md"}
+ *
+ *   Indented code blocks are not affected by this rule:
+ *
+ *       mercury()
+ *
+ * @example
+ *   {"config": "`", "name": "ok-tick.md"}
+ *
+ *   ```javascript
+ *   mercury()
+ *   ```
+ *
+ *   ```
+ *   venus()
+ *   ```
+ *
+ * @example
+ *   {"config": "~", "name": "ok-tilde.md"}
+ *
+ *   ~~~javascript
+ *   mercury()
+ *   ~~~
+ *
+ *   ~~~
+ *   venus()
+ *   ~~~
+ *
+ * @example
+ *   {"label": "input", "name": "not-ok-consistent-tick.md"}
+ *
+ *   ```javascript
+ *   mercury()
+ *   ```
+ *
+ *   ~~~
+ *   venus()
+ *   ~~~
+ * @example
+ *   {"label": "output", "name": "not-ok-consistent-tick.md"}
+ *
+ *   5:1-7:4: Unexpected fenced code marker `~`, expected `` ` ``
+ *
+ * @example
+ *   {"label": "input", "name": "not-ok-consistent-tilde.md"}
+ *
+ *   ~~~javascript
+ *   mercury()
+ *   ~~~
+ *
+ *   ```
+ *   venus()
+ *   ```
+ * @example
+ *   {"label": "output", "name": "not-ok-consistent-tilde.md"}
+ *
+ *   5:1-7:4: Unexpected fenced code marker `` ` ``, expected `~`
+ *
+ * @example
+ *   {"config": "🌍", "label": "output", "name": "not-ok-incorrect.md", "positionless": true}
+ *
+ *   1:1: Unexpected value `🌍` for `options`, expected ``'`'``, `'~'`, or `'consistent'`
+ */
+const remarkLintFencedCodeMarker = lintRule$1(
+  {
+    origin: 'remark-lint:fenced-code-marker',
+    url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-fenced-code-marker#readme'
+  },
+  function (tree, file, options) {
+    const value = String(file);
+    let cause;
+    let expected;
+    if (options === null || options === undefined || options === 'consistent') ; else if (options === '`' || options === '~') {
+      expected = options;
+    } else {
+      file.fail(
+        'Unexpected value `' +
+          options +
+          "` for `options`, expected ``'`'``, `'~'`, or `'consistent'`"
+      );
+    }
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (node.type !== 'code') return
+      const start = pointStart(node);
+      if (start && typeof start.offset === 'number') {
+        const actual = value
+          .slice(start.offset, start.offset + 4)
+          .replace(/^\s+/, '')
+          .charAt(0);
+        if (actual !== '`' && actual !== '~') return
+        if (expected) {
+          if (actual !== expected) {
+            file.message(
+              'Unexpected fenced code marker ' +
+                (actual === '~' ? '`~`' : '`` ` ``') +
+                ', expected ' +
+                (expected === '~' ? '`~`' : '`` ` ``'),
+              {ancestors: [...parents, node], cause, place: node.position}
+            );
+          }
+        } else {
+          expected = actual;
+          cause = new VFileMessage(
+            'Fenced code marker style ' +
+              (actual === '~' ? "`'~'`" : "``'`'``") +
+              " first defined for `'consistent'` here",
+            {
+              ancestors: [...parents, node],
+              place: node.position,
+              ruleId: 'fenced-code-marker',
+              source: 'remark-lint'
+            }
+          );
+        }
+      }
+    });
+  }
+);
+
+/**
+ * remark-lint rule to warn for unexpected file extensions.
+ *
+ * ## What is this?
+ *
+ * This package checks the file extension.
+ *
+ * ## When should I use this?
+ *
+ * You can use this package to check that file extensions are consistent.
+ *
+ * ## API
+ *
+ * ### `unified().use(remarkLintFileExtension[, options])`
+ *
+ * Warn for unexpected extensions.
+ *
+ * ###### Parameters
+ *
+ * * `options` ([`Extensions`][api-extensions] or [`Options`][api-options],
+ *   optional)
+ *   — configuration
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ### `Extensions`
+ *
+ * File extension(s) (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Extensions = Array<string> | string
+ * ```
+ *
+ * ### `Options`
+ *
+ * Configuration (TypeScript type).
+ *
+ * ###### Fields
+ *
+ * * `allowExtensionless` (`boolean`, default: `true`)
+ *   — allow no file extension such as `AUTHORS` or `LICENSE`
+ * * `extensions` ([`Extensions`][api-extensions], default: `['mdx', 'md']`)
+ *   — allowed file extension(s)
  *
  * ## Recommendation
  *
@@ -14982,49 +15493,118 @@ var remarkLintFencedCodeMarker$1 = remarkLintFencedCodeMarker;
  * GFM, frontmatter, or math).
  * Do not use `md` for MDX: use `mdx` instead.
  *
+ * [api-extensions]: #extensions
+ * [api-options]: #options
+ * [api-remark-lint-file-extension]: #unifieduseremarklintfileextension-options
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
+ *
  * @module file-extension
- * @summary
- *   remark-lint rule to check the file extension.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "readme.md"}
+ *
+ * @example
+ *   {"name": "readme.mdx"}
  *
  * @example
  *   {"name": "readme"}
  *
  * @example
- *   {"name": "readme.mkd", "label": "output", "positionless": true}
+ *   {"config": {"allowExtensionless": false}, "label": "output", "name": "readme", "positionless": true}
  *
- *   1:1: Incorrect extension: use `md`
+ *   1:1: Unexpected missing file extension, expected `mdx` or `md`
  *
  * @example
- *   {"name": "readme.mkd", "config": "mkd"}
+ *   {"label": "output", "name": "readme.mkd", "positionless": true}
+ *
+ *   1:1: Unexpected file extension `mkd`, expected `mdx` or `md`
+ *
+ * @example
+ *   {"config": "mkd", "name": "readme.mkd"}
+ *
+ * @example
+ *   {"config": ["markdown", "md", "mdown", "mdwn", "mdx", "mkd", "mkdn", "mkdown", "ron"], "label": "input", "name": "readme.css", "positionless": true}
+ *
+ * @example
+ *   {"config": ["markdown", "md", "mdown", "mdwn", "mdx", "mkd", "mkdn", "mkdown", "ron"], "label": "output", "name": "readme.css"}
+ *
+ *   1:1: Unexpected file extension `css`, expected `markdown`, `md`, `mdown`, …
  */
-const remarkLintFileExtension = lintRule(
+const defaultExtensions = ['mdx', 'md'];
+const listFormat = new Intl.ListFormat('en', {type: 'disjunction'});
+const listFormatUnit = new Intl.ListFormat('en', {type: 'unit'});
+const remarkLintFileExtension = lintRule$1(
   {
     origin: 'remark-lint:file-extension',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-file-extension#readme'
   },
-  (_, file, option = 'md') => {
-    const ext = file.extname;
-    if (ext && ext.slice(1) !== option) {
-      file.message('Incorrect extension: use `' + option + '`');
+  function (_, file, options) {
+    let expected = defaultExtensions;
+    let allowExtensionless = true;
+    let extensionsValue;
+    if (Array.isArray(options)) {
+      extensionsValue =  (options);
+    } else if (typeof options === 'string') {
+      extensionsValue = options;
+    } else if (options) {
+      const settings =  (options);
+      extensionsValue = settings.extensions;
+      if (settings.allowExtensionless === false) {
+        allowExtensionless = false;
+      }
+    }
+    if (Array.isArray(extensionsValue)) {
+      expected =  (extensionsValue);
+    } else if (typeof extensionsValue === 'string') {
+      expected = [extensionsValue];
+    }
+    const extname = file.extname;
+    const actual = extname ? extname.slice(1) : undefined;
+    const expectedDisplay =
+      expected.length > 3
+        ? listFormatUnit.format([...quotation(expected.slice(0, 3), '`'), '…'])
+        : listFormat.format(quotation(expected, '`'));
+    if (actual ? !expected.includes(actual) : !allowExtensionless) {
+      file.message(
+        (actual
+          ? 'Unexpected file extension `' + actual + '`'
+          : 'Unexpected missing file extension') +
+          ', expected ' +
+          expectedDisplay
+      );
     }
   }
 );
-var remarkLintFileExtension$1 = remarkLintFileExtension;
 
 /**
+ * remark-lint rule to warn when definitions are used *in* the
+ * document instead of at the end.
+ *
+ * ## What is this?
+ *
+ * This package checks where definitions are placed.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that definitions are placed at the end of
- * the document.
+ * You can use this package to check that definitions are consistently at the
+ * end of the document.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintFinalDefinition)`
+ *
+ * Warn when definitions are used *in* the document instead of at the end.
+ *
+ * ###### Parameters
+ *
  * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
@@ -15032,553 +15612,849 @@ var remarkLintFileExtension$1 = remarkLintFileExtension;
  * The simplest is perhaps to place them all at the bottem of documents.
  * If you prefer that, turn on this rule.
  *
+ * [api-remark-lint-final-definition]: #unifieduseremarklintfinaldefinition
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
+ *
  * @module final-definition
- * @summary
- *   remark-lint rule to warn when definitions are used *in* the document
- *   instead of at the end.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "ok.md"}
  *
- *   Paragraph.
+ *   Mercury.
  *
- *   [example]: http://example.com "Example Domain"
- *
- * @example
- *   {"name": "not-ok.md", "label": "input"}
- *
- *   Paragraph.
- *
- *   [example]: http://example.com "Example Domain"
- *
- *   Another paragraph.
+ *   [venus]: http://example.com
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"name": "ok.md"}
  *
- *   3:1-3:47: Move definitions to the end of the file (after the node at line `5`)
+ *   [mercury]: http://example.com/mercury/
+ *   [venus]: http://example.com/venus/
  *
  * @example
- *   {"name": "ok-comments.md"}
+ *   {"name": "ok-html-comments.md"}
  *
- *   Paragraph.
+ *   Mercury.
  *
- *   [example-1]: http://example.com/one/
+ *   [venus]: http://example.com/venus/
  *
- *   <!-- Comments are fine between and after definitions -->
+ *   <!-- HTML comments in markdown are ignored. -->
  *
- *   [example-2]: http://example.com/two/
+ *   [earth]: http://example.com/earth/
+ *
+ * @example
+ *   {"name": "ok-mdx-comments.mdx", "mdx": true}
+ *
+ *   Mercury.
+ *
+ *   [venus]: http://example.com/venus/
+ *
+ *   {/* Comments in expressions in MDX are ignored. *␀/}
+ *
+ *   [earth]: http://example.com/earth/
+ *
+ * @example
+ *   {"label": "input", "name": "not-ok.md"}
+ *
+ *   Mercury.
+ *
+ *   [venus]: https://example.com/venus/
+ *
+ *   Earth.
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   3:1-3:36: Unexpected definition before last content, expected definitions after line `5`
+ *
+ * @example
+ *   {"gfm": true, "label": "input", "name": "gfm-nok.md"}
+ *
+ *   Mercury.
+ *
+ *   [^venus]:
+ *       **Venus** is the second planet from
+ *       the Sun.
+ *
+ *   Earth.
+ * @example
+ *   {"gfm": true, "label": "output", "name": "gfm-nok.md"}
+ *
+ *   3:1-5:13: Unexpected footnote definition before last content, expected definitions after line `7`
+ *
+ * @example
+ *   {"gfm": true, "name": "gfm-ok.md"}
+ *
+ *   Mercury.
+ *
+ *   Earth.
+ *
+ *   [^venus]:
+ *       **Venus** is the second planet from
+ *       the Sun.
  */
-const remarkLintFinalDefinition = lintRule(
+const remarkLintFinalDefinition = lintRule$1(
   {
     origin: 'remark-lint:final-definition',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-final-definition#readme'
   },
-  (tree, file) => {
-    let last = 0;
-    visit$1(
-      tree,
-      (node) => {
-        if (
-          node.type === 'root' ||
-          generated(node) ||
-          (node.type === 'html' && /^\s*<!--/.test(node.value))
-        ) {
-          return
+  function (tree, file) {
+    const definitionStacks = [];
+    let contentAncestors;
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (node.type === 'definition' || node.type === 'footnoteDefinition') {
+        definitionStacks.push([...parents, node]);
+        return SKIP
+      }
+      if (
+        node.type === 'root' ||
+        (node.type === 'html' && /^[\t ]*<!--/.test(node.value)) ||
+        (node.type === 'mdxFlowExpression' && /^\s*\/\*/.test(node.value))
+      ) {
+        return
+      }
+      contentAncestors = [...parents, node];
+    });
+    const content = contentAncestors ? contentAncestors.at(-1) : undefined;
+    const contentEnd = pointEnd(content);
+    if (contentEnd) {
+      for (const definitionAncestors of definitionStacks) {
+        const definition = definitionAncestors.at(-1);
+        const definitionStart = pointStart(definition);
+        if (definitionStart && definitionStart.line < contentEnd.line) {
+          file.message(
+            'Unexpected ' +
+              (definition.type === 'footnoteDefinition' ? 'footnote ' : '') +
+              'definition before last content, expected definitions after line `' +
+              contentEnd.line +
+              '`',
+            {
+              ancestors: definitionAncestors,
+              cause: new VFileMessage('Last content defined here', {
+                ancestors: contentAncestors,
+                place: content.position,
+                ruleId: 'final-definition',
+                source: 'remark-lint'
+              }),
+              place: definition.position
+            }
+          );
         }
-        const line = pointStart(node).line;
-        if (node.type === 'definition') {
-          if (last && last > line) {
-            file.message(
-              'Move definitions to the end of the file (after the node at line `' +
-                last +
-                '`)',
-              node
-            );
-          }
-        } else if (last === 0) {
-          last = line;
-        }
-      },
-      true
-    );
+      }
+    }
   }
 );
-var remarkLintFinalDefinition$1 = remarkLintFinalDefinition;
 
 /**
+ * remark-lint rule to warn when the first heading has an unexpected rank.
+ *
+ * ## What is this?
+ *
+ * This package checks the rank of the first heading.
+ *
  * ## When should I use this?
  *
- * You can use this package to check the heading rank of the first heading.
+ * You can use this package to check that the rank of first headings is
+ * consistent.
  *
  * ## API
  *
- * The following options (default: `1`) are accepted:
+ * ### `unified().use(remarkLintFirstHeadingLevel[, options])`
  *
- * *   `number` (example `1`)
- *     — expected rank of first heading
+ * Warn when the first heading has an unexpected rank.
+ *
+ * ###### Parameters
+ *
+ * * `options` ([`Options`][api-options], default: `1`)
+ *   — configuration
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ### `Options`
+ *
+ * Configuration (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Options = 1 | 2 | 3 | 4 | 5 | 6
+ * ```
  *
  * ## Recommendation
  *
  * In most cases you’d want to first heading in a markdown document to start at
- * rank 1.
- * In some cases a different rank makes more sense, such as when building a blog
- * and generating the primary heading from frontmatter metadata, in which case
- * a value of `2` can be defined here.
+ * rank `1`.
+ * In some cases a different rank makes more sense,
+ * such as when building a blog and generating the primary heading from
+ * frontmatter metadata,
+ * in which case a value of `2` can be defined here or the rule can be turned
+ * off.
+ *
+ * [api-options]: #options
+ * [api-remark-lint-first-heading-level]: #unifieduseremarklintfirstheadinglevel-options
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module first-heading-level
- * @summary
- *   remark-lint rule to warn when the first heading has an unexpected rank.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "ok.md"}
  *
- *   # The default is to expect a level one heading
+ *   # Mercury
+ *
+ * @example
+ *   {"name": "ok-delay.md"}
+ *
+ *   Mercury.
+ *
+ *   # Venus
+ *
+ * @example
+ *   {"label": "input", "name": "not-ok.md"}
+ *
+ *   ## Mercury
+ *
+ *   Venus.
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   1:1-1:11: Unexpected first heading rank `2`, expected rank `1`
+ *
+ * @example
+ *   {"config": 2, "name": "ok.md"}
+ *
+ *   ## Mercury
+ *
+ *   Venus.
  *
  * @example
  *   {"name": "ok-html.md"}
  *
- *   <h1>An HTML heading is also seen by this rule.</h1>
+ *   <div>Mercury.</div>
+ *
+ *   <h1>Venus</h1>
  *
  * @example
- *   {"name": "ok-delayed.md"}
+ *   {"mdx": true, "name": "ok-mdx.mdx"}
  *
- *   You can use markdown content before the heading.
+ *   <div>Mercury.</div>
  *
- *   <div>Or non-heading HTML</div>
- *
- *   <h1>So the first heading, be it HTML or markdown, is checked</h1>
+ *   <h1>Venus</h1>
  *
  * @example
- *   {"name": "not-ok.md", "label": "input"}
+ *   {"config": "🌍", "label": "output", "name": "not-ok-options.md", "positionless": true}
  *
- *   ## Bravo
- *
- *   Paragraph.
- *
- * @example
- *   {"name": "not-ok.md", "label": "output"}
- *
- *   1:1-1:9: First heading level should be `1`
- *
- * @example
- *   {"name": "not-ok-html.md", "label": "input"}
- *
- *   <h2>Charlie</h2>
- *
- *   Paragraph.
- *
- * @example
- *   {"name": "not-ok-html.md", "label": "output"}
- *
- *   1:1-1:17: First heading level should be `1`
- *
- * @example
- *   {"name": "ok.md", "config": 2}
- *
- *   ## Delta
- *
- *   Paragraph.
- *
- * @example
- *   {"name": "ok-html.md", "config": 2}
- *
- *   <h2>Echo</h2>
- *
- *   Paragraph.
- *
- * @example
- *   {"name": "not-ok.md", "config": 2, "label": "input"}
- *
- *   # Foxtrot
- *
- *   Paragraph.
- *
- * @example
- *   {"name": "not-ok.md", "config": 2, "label": "output"}
- *
- *   1:1-1:10: First heading level should be `2`
- *
- * @example
- *   {"name": "not-ok-html.md", "config": 2, "label": "input"}
- *
- *   <h1>Golf</h1>
- *
- *   Paragraph.
- *
- * @example
- *   {"name": "not-ok-html.md", "config": 2, "label": "output"}
- *
- *   1:1-1:14: First heading level should be `2`
+ *   1:1: Unexpected value `🌍` for `options`, expected `1`, `2`, `3`, `4`, `5`, or `6`
  */
-const re$2 = /<h([1-6])/;
-const remarkLintFirstHeadingLevel = lintRule(
+const htmlRe$1 = /<h([1-6])/;
+const jsxNameRe$1 = /^h([1-6])$/;
+const remarkLintFirstHeadingLevel = lintRule$1(
   {
     origin: 'remark-lint:first-heading-level',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-first-heading-level#readme'
   },
-  (tree, file, option = 1) => {
-    visit$1(tree, (node) => {
-      if (!generated(node)) {
-        let rank;
-        if (node.type === 'heading') {
-          rank = node.depth;
-        } else if (node.type === 'html') {
-          rank = infer(node);
+  function (tree, file, options) {
+    let expected;
+    if (options === null || options === undefined) {
+      expected = 1;
+    } else if (
+      options === 1 ||
+      options === 2 ||
+      options === 3 ||
+      options === 4 ||
+      options === 5 ||
+      options === 6
+    ) {
+      expected = options;
+    } else {
+      file.fail(
+        'Unexpected value `' +
+          options +
+          '` for `options`, expected `1`, `2`, `3`, `4`, `5`, or `6`'
+      );
+    }
+    visitParents(tree, function (node, parents) {
+      let actual;
+      if (node.type === 'heading') {
+        actual = node.depth;
+      } else if (node.type === 'html') {
+        const results = node.value.match(htmlRe$1);
+        actual = results
+          ?  (Number(results[1]))
+          : undefined;
+      } else if (
+        (node.type === 'mdxJsxFlowElement' ||
+          node.type === 'mdxJsxTextElement') &&
+        node.name
+      ) {
+        const results = node.name.match(jsxNameRe$1);
+        actual = results
+          ?  (Number(results[1]))
+          : undefined;
+      }
+      if (actual && node.position) {
+        if (node.position && actual !== expected) {
+          file.message(
+            'Unexpected first heading rank `' +
+              actual +
+              '`, expected rank `' +
+              expected +
+              '`',
+            {ancestors: [...parents, node], place: node.position}
+          );
         }
-        if (rank !== undefined) {
-          if (rank !== option) {
-            file.message('First heading level should be `' + option + '`', node);
-          }
-          return EXIT$1
-        }
+        return EXIT
       }
     });
   }
 );
-var remarkLintFirstHeadingLevel$1 = remarkLintFirstHeadingLevel;
-function infer(node) {
-  const results = node.value.match(re$2);
-  return results ? Number(results[1]) : undefined
+
+function headingStyle(node, relative) {
+  const last = node.children[node.children.length - 1];
+  const depth = node.depth;
+  const pos = node.position && node.position.end;
+  const final = last && last.position && last.position.end;
+  if (!pos) {
+    return undefined
+  }
+  if (!last) {
+    if (pos.column - 1 <= depth * 2) {
+      return consolidate(depth, relative)
+    }
+    return 'atx-closed'
+  }
+  if (final && final.line + 1 === pos.line) {
+    return 'setext'
+  }
+  if (final && final.column + depth < pos.column) {
+    return 'atx-closed'
+  }
+  return consolidate(depth, relative)
+}
+function consolidate(depth, relative) {
+  return depth < 3
+    ? 'atx'
+    : relative === 'atx' || relative === 'setext'
+    ? relative
+    : undefined
 }
 
 /**
+ * remark-lint rule to warn when headings violate a given style.
+ *
+ * ## What is this?
+ *
+ * This package checks the style of headings.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that headings are consistent.
+ * You can use this package to check that the style of headings is consistent.
  *
  * ## API
  *
- * The following options (default: `'consistent'`) are accepted:
+ * ### `unified().use(remarkLintHeadingStyle[, options])`
  *
- * *   `'atx'`
- *     — prefer ATX headings:
- *     ```markdown
- *     ## Hello
- *     ```
- * *   `'atx-closed'`
- *     — prefer ATX headings with a closing sequence:
- *     ```markdown
- *     ## Hello ##
- *     ```
- * *   `'setext'`
- *     — prefer setext headings:
- *     ```markdown
- *     Hello
- *     -----
- *     ```
- * *   `'consistent'`
- *     — detect the first used style and warn when further headings differ
+ * Warn when headings violate a given style.
+ *
+ * ###### Parameters
+ *
+ * * `options` ([`Options`][api-options], default: `'consistent'`)
+ *   — preferred style or whether to detect the first style and warn for
+ *   further differences
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ### `Options`
+ *
+ * Configuration (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Options = Style | 'consistent'
+ * ```
+ *
+ * ### `Style`
+ *
+ * Style (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Style = 'atx' | 'atx-closed' | 'setext'
+ * ```
  *
  * ## Recommendation
  *
  * Setext headings are limited in that they can only construct headings with a
  * rank of one and two.
- * On the other hand, they do allow multiple lines of content whereas ATX only
- * allows one line.
- * The number of used markers in their underline does not matter, leading to
- * either:
+ * They do allow multiple lines of content where ATX only allows one line.
+ * The number of used markers in their underline does not matter,
+ * leading to either:
  *
- * *   1 marker (`Hello\n-`), which is the bare minimum, and for rank 2 headings
- *     looks suspiciously like an empty list item
- * *   using as many markers as the content (`Hello\n-----`), which is hard to
- *     maintain
- * *   an arbitrary number (`Hello\n---`), which for rank 2 headings looks
- *     suspiciously like a thematic break
+ * * 1 marker (`Hello\n-`),
+ *   which is the bare minimum,
+ *   and for rank 2 headings looks suspiciously like an empty list item
+ * * using as many markers as the content (`Hello\n-----`),
+ *   which is hard to maintain and diff
+ * * an arbitrary number (`Hello\n---`), which for rank 2 headings looks
+ *   suspiciously like a thematic break
  *
- * Setext headings are also rather uncommon.
+ * Setext headings are also uncommon.
  * Using a sequence of hashes at the end of ATX headings is even more uncommon.
- * Due to this, it’s recommended to prefer ATX headings.
+ * Due to this,
+ * it’s recommended to use ATX headings, without closing hashes.
  *
  * ## Fix
  *
- * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
- * formats headings as ATX by default.
- * The other styles can be configured with
- * [`setext: true`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify#optionssetext)
- * or
- * [`closeAtx: true`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify#optionscloseatx).
+ * [`remark-stringify`][github-remark-stringify] formats headings as ATX by default.
+ * The other styles can be configured with `setext: true` or `closeAtx: true`.
+ *
+ * [api-options]: #options
+ * [api-remark-lint-heading-style]: #unifieduseremarklintheadingstyle-options
+ * [api-style]: #style
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module heading-style
- * @summary
- *   remark-lint rule to warn when headings violate a given style.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
- * @example
- *   {"name": "ok.md", "config": "atx"}
- *
- *   # Alpha
- *
- *   ## Bravo
- *
- *   ### Charlie
  *
  * @example
- *   {"name": "ok.md", "config": "atx-closed"}
+ *   {"config": "atx", "name": "ok.md"}
  *
- *   # Delta ##
+ *   # Mercury
  *
- *   ## Echo ##
+ *   ## Venus
  *
- *   ### Foxtrot ###
- *
- * @example
- *   {"name": "ok.md", "config": "setext"}
- *
- *   Golf
- *   ====
- *
- *   Hotel
- *   -----
- *
- *   ### India
+ *   ### Earth
  *
  * @example
- *   {"name": "not-ok.md", "label": "input"}
+ *   {"config": "atx-closed", "name": "ok.md"}
  *
- *   Juliett
+ *   # Mercury ##
+ *
+ *   ## Venus ##
+ *
+ *   ### Earth ###
+ *
+ * @example
+ *   {"config": "setext", "name": "ok.md"}
+ *
+ *   Mercury
  *   =======
  *
- *   ## Kilo
+ *   Venus
+ *   -----
  *
- *   ### Lima ###
- *
- * @example
- *   {"name": "not-ok.md", "label": "output"}
- *
- *   4:1-4:8: Headings should use setext
- *   6:1-6:13: Headings should use setext
+ *   ### Earth
  *
  * @example
- *   {"name": "not-ok.md", "config": "💩", "label": "output", "positionless": true}
+ *   {"label": "input", "name": "not-ok.md"}
  *
- *   1:1: Incorrect heading style type `💩`: use either `'consistent'`, `'atx'`, `'atx-closed'`, or `'setext'`
+ *   Mercury
+ *   =======
+ *
+ *   ## Venus
+ *
+ *   ### Earth ###
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   4:1-4:9: Unexpected ATX heading, expected setext
+ *   6:1-6:14: Unexpected ATX (closed) heading, expected setext
+ *
+ * @example
+ *   {"config": "🌍", "label": "output", "name": "not-ok.md", "positionless": true}
+ *
+ *   1:1: Unexpected value `🌍` for `options`, expected `'atx'`, `'atx-closed'`, `'setext'`, or `'consistent'`
  */
-const remarkLintHeadingStyle = lintRule(
+const remarkLintHeadingStyle = lintRule$1(
   {
     origin: 'remark-lint:heading-style',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-heading-style#readme'
   },
-  (tree, file, option = 'consistent') => {
-    if (
-      option !== 'consistent' &&
-      option !== 'atx' &&
-      option !== 'atx-closed' &&
-      option !== 'setext'
+  function (tree, file, options) {
+    let cause;
+    let expected;
+    if (options === null || options === undefined || options === 'consistent') ; else if (
+      options === 'atx' ||
+      options === 'atx-closed' ||
+      options === 'setext'
     ) {
+      expected = options;
+    } else {
       file.fail(
-        'Incorrect heading style type `' +
-          option +
-          "`: use either `'consistent'`, `'atx'`, `'atx-closed'`, or `'setext'`"
+        'Unexpected value `' +
+          options +
+          "` for `options`, expected `'atx'`, `'atx-closed'`, `'setext'`, or `'consistent'`"
       );
     }
-    visit$1(tree, 'heading', (node) => {
-      if (!generated(node)) {
-        if (option === 'consistent') {
-          option = headingStyle(node) || 'consistent';
-        } else if (headingStyle(node, option) !== option) {
-          file.message('Headings should use ' + option, node);
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (node.type !== 'heading') return
+      const place = position(node);
+      const actual = headingStyle(node, expected);
+      if (actual) {
+        if (expected) {
+          if (place && actual !== expected) {
+            file.message(
+              'Unexpected ' +
+                displayStyle(actual) +
+                ' heading, expected ' +
+                displayStyle(expected),
+              {ancestors: [...parents, node], cause, place}
+            );
+          }
+        } else {
+          expected = actual;
+          cause = new VFileMessage(
+            'Heading style ' +
+              displayStyle(expected) +
+              " first defined for `'consistent'` here",
+            {
+              ancestors: [...parents, node],
+              place,
+              ruleId: 'heading-style',
+              source: 'remark-lint'
+            }
+          );
         }
       }
     });
   }
 );
-var remarkLintHeadingStyle$1 = remarkLintHeadingStyle;
+function displayStyle(style) {
+  return style === 'atx'
+    ? 'ATX'
+    : style === 'atx-closed'
+      ? 'ATX (closed)'
+      : 'setext'
+}
 
 /**
+ * remark-lint rule to warn when lines are too long.
+ *
+ * ## What is this?
+ *
+ * This package checks the length of lines.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that lines do not exceed a certain size.
+ * You can use this package to check that lines are within reason.
  *
  * ## API
  *
- * The following options (default: `80`) are accepted:
+ * ### `unified().use(remarkLintMaximumLineLength[, options])`
  *
- * *   `number` (example: `72`)
- *     — max number of characters to accept in heading text
+ * Warn when lines are too long.
  *
- * Ignores nodes that cannot be wrapped, such as headings, tables, code,
- * definitions, HTML, and JSX.
- * Ignores images, links, and code (inline) if they start before the wrap, end
- * after the wrap, and there’s no white space after them.
+ * Nodes that cannot be wrapped are ignored, such as JSX, HTML, code (flow),
+ * definitions, headings, and tables.
+ *
+ * When code (phrasing), images, and links start before the wrap,
+ * end after the wrap,
+ * and contain no whitespace,
+ * they are also ignored.
+ *
+ * ###### Parameters
+ *
+ * * `options` (`number`, default: `80`)
+ *   — preferred max size
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
  * Whether to wrap prose or not is a stylistic choice.
  *
+ * [api-remark-lint-maximum-line-length]: #unifieduseremarklintmaximumlinelength-options
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
+ *
  * @module maximum-line-length
- * @summary
- *   remark-lint rule to warn when lines are too long.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
- * @example
- *   {"name": "ok.md", "positionless": true, "gfm": true}
- *
- *   This line is simply not toooooooooooooooooooooooooooooooooooooooooooo
- *   long.
- *
- *   This is also fine: <http://this-long-url-with-a-long-domain.co.uk/a-long-path?query=variables>
- *
- *   <http://this-link-is-fine.com>
- *
- *   `alphaBravoCharlieDeltaEchoFoxtrotGolfHotelIndiaJuliettKiloLimaMikeNovemberOscarPapaQuebec.romeo()`
- *
- *   [foo](http://this-long-url-with-a-long-domain-is-ok.co.uk/a-long-path?query=variables)
- *
- *   <http://this-long-url-with-a-long-domain-is-ok.co.uk/a-long-path?query=variables>
- *
- *   ![foo](http://this-long-url-with-a-long-domain-is-ok.co.uk/a-long-path?query=variables)
- *
- *   | An | exception | is | line | length | in | long | tables | because | those | can’t | just |
- *   | -- | --------- | -- | ---- | ------ | -- | ---- | ------ | ------- | ----- | ----- | ---- |
- *   | be | helped    |    |      |        |    |      |        |         |       |       | .    |
- *
- *   <a><b><i><p><q><s><u>alpha bravo charlie delta echo foxtrot golf</u></s></q></p></i></b></a>
- *
- *   The following is also fine (note the `.`), because there is no whitespace.
- *
- *   <http://this-long-url-with-a-long-domain-is-ok.co.uk/a-long-path?query=variables>.
- *
- *   In addition, definitions are also fine:
- *
- *   [foo]: <http://this-long-url-with-a-long-domain-is-ok.co.uk/a-long-path?query=variables>
  *
  * @example
- *   {"name": "not-ok.md", "config": 80, "label": "input", "positionless": true}
+ *   {"name": "ok.md", "positionless": true}
  *
- *   This line is simply not tooooooooooooooooooooooooooooooooooooooooooooooooooooooo
- *   long.
+ *   Mercury mercury mercury mercury mercury mercury mercury mercury mercury mercury
+ *   mercury.
  *
- *   Just like thiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiis one.
+ *   Mercury mercury mercury mercury mercury mercury mercury mercury mercury `mercury()`.
  *
- *   And this one is also very wrong: because the link starts aaaaaaafter the column: <http://line.com>
+ *   Mercury mercury mercury mercury mercury mercury mercury mercury mercury <http://localhost>.
  *
- *   <http://this-long-url-with-a-long-domain-is-not-ok.co.uk/a-long-path?query=variables> and such.
+ *   Mercury mercury mercury mercury mercury mercury mercury mercury mercury [mercury](http://localhost).
  *
- *   And this one is also very wrong: because the code starts aaaaaaafter the column: `alpha.bravo()`
+ *   Mercury mercury mercury mercury mercury mercury mercury mercury mercury ![mercury](http://localhost).
  *
- *   `alphaBravoCharlieDeltaEchoFoxtrotGolfHotelIndiaJuliettKiloLimaMikeNovemberOscar.papa()` and such.
+ *   <div>Mercury mercury mercury mercury mercury mercury mercury mercury mercury</div>
  *
- * @example
- *   {"name": "not-ok.md", "config": 80, "label": "output", "positionless": true}
- *
- *   4:86: Line must be at most 80 characters
- *   6:99: Line must be at most 80 characters
- *   8:96: Line must be at most 80 characters
- *   10:97: Line must be at most 80 characters
- *   12:99: Line must be at most 80 characters
+ *   [foo]: http://localhost/mercury/mercury/mercury/mercury/mercury/mercury/mercury/mercury
  *
  * @example
- *   {"name": "ok-mixed-line-endings.md", "config": 10, "positionless": true}
+ *   {"config": 20, "label": "input", "name": "not-ok.md", "positionless": true}
  *
- *   0123456789␍␊
- *   0123456789␊
- *   01234␍␊
- *   01234␊
+ *   Mercury mercury mercury
+ *   mercury.
+ *
+ *   Mercury mercury mercury `mercury()`.
+ *
+ *   Mercury mercury mercury <http://localhost>.
+ *
+ *   Mercury mercury mercury [m](example.com).
+ *
+ *   Mercury mercury mercury ![m](example.com).
+ *
+ *   `mercury()` mercury mercury mercury.
+ *
+ *   <http://localhost> mercury.
+ *
+ *   [m](example.com) mercury.
+ *
+ *   ![m](example.com) mercury.
+ *
+ *   Mercury mercury ![m](example.com) mercury.
  *
  * @example
- *   {"name": "not-ok-mixed-line-endings.md", "config": 10, "label": "input", "positionless": true}
+ *   {"config": 20, "label": "output", "name": "not-ok.md", "positionless": true}
  *
- *   012345678901␍␊
- *   012345678901␊
- *   01234567890␍␊
- *   01234567890␊
+ *   1:24: Unexpected `23` character line, expected at most `20` characters, remove `3` characters
+ *   4:37: Unexpected `36` character line, expected at most `20` characters, remove `16` characters
+ *   6:44: Unexpected `43` character line, expected at most `20` characters, remove `23` characters
+ *   8:42: Unexpected `41` character line, expected at most `20` characters, remove `21` characters
+ *   10:43: Unexpected `42` character line, expected at most `20` characters, remove `22` characters
+ *   12:37: Unexpected `36` character line, expected at most `20` characters, remove `16` characters
+ *   14:28: Unexpected `27` character line, expected at most `20` characters, remove `7` characters
+ *   16:26: Unexpected `25` character line, expected at most `20` characters, remove `5` characters
+ *   18:27: Unexpected `26` character line, expected at most `20` characters, remove `6` characters
+ *   20:43: Unexpected `42` character line, expected at most `20` characters, remove `22` characters
  *
  * @example
- *   {"name": "not-ok-mixed-line-endings.md", "config": 10, "label": "output", "positionless": true}
+ *   {"config": 20, "name": "long-autolinks-ok.md", "positionless": true}
  *
- *   1:13: Line must be at most 10 characters
- *   2:13: Line must be at most 10 characters
- *   3:12: Line must be at most 10 characters
- *   4:12: Line must be at most 10 characters
+ *   <http://localhost/mercury/>
+ *
+ *   <http://localhost/mercury/>
+ *   mercury.
+ *
+ *   Mercury
+ *   <http://localhost/mercury/>.
+ *
+ *   Mercury
+ *   <http://localhost/mercury/>
+ *   mercury.
+ *
+ *   Mercury
+ *   <http://localhost/mercury/>
+ *   mercury mercury.
+ *
+ *   Mercury mercury
+ *   <http://localhost/mercury/>
+ *   mercury mercury.
+ *
+ * @example
+ *   {"config": 20, "label": "input", "name": "long-autolinks-nok.md", "positionless": true}
+ *
+ *   <http://localhost/mercury/> mercury.
+ *
+ *   Mercury <http://localhost/mercury/>.
+ *
+ *   Mercury
+ *   <http://localhost/mercury/> mercury.
+ *
+ *   Mercury <http://localhost/mercury/>
+ *   mercury.
+ * @example
+ *   {"config": 20, "label": "output", "name": "long-autolinks-nok.md"}
+ *
+ *   1:37: Unexpected `36` character line, expected at most `20` characters, remove `16` characters
+ *   6:37: Unexpected `36` character line, expected at most `20` characters, remove `16` characters
+ *
+ * @example
+ *   {"config": 20, "frontmatter": true, "name": "ok.md", "positionless": true}
+ *
+ *   ---
+ *   description: Mercury mercury mercury mercury.
+ *   ---
+ *
+ * @example
+ *   {"config": 20, "gfm": true, "name": "ok.md", "positionless": true}
+ *
+ *   | Mercury | Mercury | Mercury |
+ *   | ------- | ------- | ------- |
+ *
+ * @example
+ *   {"config": 20, "math": true, "name": "ok.md", "positionless": true}
+ *
+ *   $$
+ *   L = \frac{1}{2} \rho v^2 S C_L
+ *   $$
+ *
+ * @example
+ *   {"config": 20, "mdx": true, "name": "ok.md", "positionless": true}
+ *
+ *   export const description = 'Mercury mercury mercury mercury.'
+ *
+ *   {description}
+ *
+ * @example
+ *   {"config": 10, "name": "ok-mixed-line-endings.md", "positionless": true}
+ *
+ *   0123456789␍␊0123456789␊01234␍␊01234␊
+ *
+ * @example
+ *   {"config": 10, "label": "input", "name": "not-ok-mixed-line-endings.md", "positionless": true}
+ *
+ *   012345678901␍␊012345678901␊01234567890␍␊01234567890␊
+ *
+ * @example
+ *   {"config": 10, "label": "output", "name": "not-ok-mixed-line-endings.md", "positionless": true}
+ *
+ *   1:13: Unexpected `12` character line, expected at most `10` characters, remove `2` characters
+ *   2:13: Unexpected `12` character line, expected at most `10` characters, remove `2` characters
+ *   3:12: Unexpected `11` character line, expected at most `10` characters, remove `1` character
+ *   4:12: Unexpected `11` character line, expected at most `10` characters, remove `1` character
+ *
+ * @example
+ *   {"config": "🌍", "label": "output", "name": "not-ok.md", "positionless": true}
+ *
+ *   1:1: Unexpected value `🌍` for `options`, expected `number`
  */
-const remarkLintMaximumLineLength = lintRule(
+const remarkLintMaximumLineLength = lintRule$1(
   {
     origin: 'remark-lint:maximum-line-length',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-maximum-line-length#readme'
   },
-  (tree, file, option = 80) => {
+  function (tree, file, options) {
     const value = String(file);
     const lines = value.split(/\r?\n/);
-    visit$1(tree, (node) => {
+    let expected = 80;
+    if (options === null || options === undefined) ; else if (typeof options === 'number') {
+      expected = options;
+    } else {
+      file.fail(
+        'Unexpected value `' + options + '` for `options`, expected `number`'
+      );
+    }
+    visit(tree, function (node, index, parent) {
       if (
-        (node.type === 'heading' ||
-          node.type === 'table' ||
-          node.type === 'code' ||
-          node.type === 'definition' ||
-          node.type === 'html' ||
-          node.type === 'jsx' ||
-          node.type === 'mdxFlowExpression' ||
-          node.type === 'mdxJsxFlowElement' ||
-          node.type === 'mdxJsxTextElement' ||
-          node.type === 'mdxTextExpression' ||
-          node.type === 'mdxjsEsm' ||
-          node.type === 'yaml' ||
-          node.type === 'toml') &&
-        !generated(node)
+        node.type === 'code' ||
+        node.type === 'definition' ||
+        node.type === 'heading' ||
+        node.type === 'html' ||
+        node.type === 'math' ||
+        node.type === 'mdxjsEsm' ||
+        node.type === 'mdxFlowExpression' ||
+        node.type === 'mdxTextExpression' ||
+        node.type === 'table' ||
+        node.type === 'toml' ||
+        node.type === 'yaml'
       ) {
-        allowList(pointStart(node).line - 1, pointEnd(node).line);
+        const end = pointEnd(node);
+        const start = pointStart(node);
+        if (end && start) {
+          let line = start.line - 1;
+          while (line < end.line) {
+            lines[line++] = '';
+          }
+        }
+        return SKIP
       }
-    });
-    visit$1(tree, (node, pos, parent) => {
       if (
-        (node.type === 'link' ||
-          node.type === 'image' ||
-          node.type === 'inlineCode') &&
-        !generated(node) &&
-        parent &&
-        typeof pos === 'number'
+        node.type === 'image' ||
+        node.type === 'inlineCode' ||
+        node.type === 'link'
       ) {
-        const initial = pointStart(node);
-        const final = pointEnd(node);
-        if (initial.column > option || final.column < option) {
-          return
+        const end = pointEnd(node);
+        const start = pointStart(node);
+        if (end && start && parent && typeof index === 'number') {
+          if (start.column > expected) return
+          if (end.column < expected) return
+          const next = parent.children[index + 1];
+          const nextStart = pointStart(next);
+          if (
+            next &&
+            nextStart &&
+            nextStart.line === start.line &&
+            (!('value' in next) ||
+              /^([^\r\n]*)[ \t]/.test(next.value))
+          ) {
+            return
+          }
+          let line = start.line - 1;
+          while (line < end.line) {
+            lines[line++] = '';
+          }
         }
-        const next = parent.children[pos + 1];
-        if (
-          next &&
-          pointStart(next).line === initial.line &&
-          (!('value' in next) || /^(.+?[ \t].+?)/.test(next.value))
-        ) {
-          return
-        }
-        allowList(initial.line - 1, final.line);
       }
     });
     let index = -1;
     while (++index < lines.length) {
-      const lineLength = lines[index].length;
-      if (lineLength > option) {
-        file.message('Line must be at most ' + option + ' characters', {
-          line: index + 1,
-          column: lineLength + 1
-        });
-      }
-    }
-    function allowList(initial, final) {
-      while (initial < final) {
-        lines[initial++] = '';
+      const actualBytes = lines[index].length;
+      const actualCharacters = Array.from(lines[index]).length;
+      const difference = actualCharacters - expected;
+      if (difference > 0) {
+        file.message(
+          'Unexpected `' +
+            actualCharacters +
+            '` character line, expected at most `' +
+            expected +
+            '` characters, remove `' +
+            difference +
+            '` ' +
+            pluralize('character', difference),
+          {
+            line: index + 1,
+            column: actualBytes + 1
+          }
+        );
       }
     }
   }
 );
-var remarkLintMaximumLineLength$1 = remarkLintMaximumLineLength;
 
 /**
+ * remark-lint rule to warn when multiple blank lines are used.
+ *
+ * ## What is this?
+ *
+ * This package checks the number of blank lines.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that no more blank lines than needed
- * are used between blocks.
+ * You can use this package to check that there are no unneeded blank lines.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintNoConsecutiveBlankLines)`
+ *
+ * Warn when multiple blank lines are used.
+ *
+ * ###### Parameters
+ *
  * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
@@ -15586,235 +16462,497 @@ var remarkLintMaximumLineLength$1 = remarkLintMaximumLineLength;
  *
  * ## Fix
  *
- * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
- * adds exactly one blank line between any block.
+ * [`remark-stringify`][github-remark-stringify] adds exactly one blank line
+ * between any block.
+ * It has a `join` option to configure more complex cases.
+ *
+ * [api-remark-lint-no-consecutive-blank-lines]: #unifieduseremarklintnoconsecutiveblanklines
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module no-consecutive-blank-lines
- * @summary
- *   remark-lint rule to warn when more blank lines that needed are used
- *   between blocks.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "ok.md"}
  *
- *   Foo…
- *   ␊
- *   …Bar.
+ *   # Planets
+ *
+ *   Mercury.
+ *
+ *   Venus.
+ *
+ * @example
+ *   {"label": "input", "name": "not-ok.md"}
+ *
+ *   # Planets
+ *
+ *
+ *   Mercury.
+ *
+ *
+ *
+ *   Venus.
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   4:1: Unexpected `2` blank lines before node, expected up to `1` blank line, remove `1` blank line
+ *   8:1: Unexpected `3` blank lines before node, expected up to `1` blank line, remove `2` blank lines
+ *
+ * @example
+ *   {"label": "input", "name": "initial.md"}
+ *
+ *   ␊Mercury.
+ * @example
+ *   {"label": "output", "name": "initial.md"}
+ *
+ *   2:1: Unexpected `1` blank line before node, expected `0` blank lines, remove `1` blank line
+ *
+ * @example
+ *   {"name": "final-one.md"}
+ *
+ *   Mercury.␊
+ *
+ * @example
+ *   {"label": "input", "name": "final-more.md"}
+ *
+ *   Mercury.␊␊
+ * @example
+ *   {"label": "output", "name": "final-more.md"}
+ *
+ *   1:9: Unexpected `1` blank line after node, expected `0` blank lines, remove `1` blank line
  *
  * @example
  *   {"name": "empty-document.md"}
  *
  * @example
- *   {"name": "not-ok.md", "label": "input"}
+ *   {"label": "input", "name": "block-quote.md"}
  *
- *   Foo…
- *   ␊
- *   ␊
- *   …Bar
- *   ␊
- *   ␊
+ *   > Mercury.
+ *
+ *   Venus.
+ *
+ *   >
+ *   > Earth.
+ *   >
+ * @example
+ *   {"label": "output", "name": "block-quote.md"}
+ *
+ *   6:3: Unexpected `1` blank line before node, expected `0` blank lines, remove `1` blank line
+ *   6:9: Unexpected `1` blank line after node, expected `0` blank lines, remove `1` blank line
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"directive": true, "label": "input", "name": "directive.md"}
  *
- *   4:1: Remove 1 line before node
- *   4:5: Remove 2 lines after node
+ *   :::mercury
+ *   Venus.
+ *
+ *
+ *   Earth.
+ *   :::
+ * @example
+ *   {"directive": true, "label": "output", "name": "directive.md"}
+ *
+ *   5:1: Unexpected `2` blank lines before node, expected up to `1` blank line, remove `1` blank line
+ *
+ * @example
+ *   {"gfm": true, "label": "input", "name": "footnote.md"}
+ *
+ *   [^x]:
+ *       Mercury.
+ *
+ *   Venus.
+ *
+ *   [^y]:
+ *
+ *       Earth.
+ *
+ *
+ *       Mars.
+ * @example
+ *   {"gfm": true, "label": "output", "name": "footnote.md"}
+ *
+ *   8:5: Unexpected `1` blank line before node, expected `0` blank lines, remove `1` blank line
+ *   11:5: Unexpected `2` blank lines before node, expected up to `1` blank line, remove `1` blank line
+ *
+ * @example
+ *   {"label": "input", "mdx": true, "name": "jsx.md"}
+ *
+ *   <Mercury>
+ *     Venus.
+ *
+ *
+ *     Earth.
+ *   </Mercury>
+ * @example
+ *   {"label": "output", "mdx": true, "name": "jsx.md"}
+ *
+ *   5:3: Unexpected `2` blank lines before node, expected up to `1` blank line, remove `1` blank line
+ *
+ * @example
+ *   {"label": "input", "name": "list.md"}
+ *
+ *   * Mercury.
+ *   * Venus.
+ *
+ *   ***
+ *
+ *   * Mercury.
+ *
+ *   * Venus.
+ *
+ *   ***
+ *
+ *   * Mercury.
+ *
+ *
+ *   * Venus.
+ * @example
+ *   {"label": "output", "name": "list.md"}
+ *
+ *   15:1: Unexpected `2` blank lines before node, expected up to `1` blank line, remove `1` blank line
+ *
+ * @example
+ *   {"label": "input", "name": "list-item.md"}
+ *
+ *   * Mercury.
+ *     Venus.
+ *
+ *   ***
+ *
+ *   * Mercury.
+ *
+ *     Venus.
+ *
+ *   ***
+ *
+ *   * Mercury.
+ *
+ *
+ *     Venus.
+ *
+ *   ***
+ *
+ *   *
+ *     Mercury.
+ * @example
+ *   {"label": "output", "name": "list-item.md"}
+ *
+ *   15:3: Unexpected `2` blank lines before node, expected up to `1` blank line, remove `1` blank line
+ *   20:3: Unexpected `1` blank line before node, expected `0` blank lines, remove `1` blank line
+ *
+ * @example
+ *   {"label": "input", "name": "deep-block-quote.md"}
+ *
+ *   * > * > # Venus␊␊
+ * @example
+ *   {"label": "output", "name": "deep-block-quote.md"}
+ *
+ *   1:16: Unexpected `1` blank line after node, expected `0` blank lines, remove `1` blank line
+ *
+ * @example
+ *   {"label": "input", "name": "deep-list-item.md"}
+ *
+ *   > * > * # Venus␊␊
+ * @example
+ *   {"label": "output", "name": "deep-list-item.md"}
+ *
+ *   1:16: Unexpected `1` blank line after node, expected `0` blank lines, remove `1` blank line
  */
-const unknownContainerSize = new Set(['mdxJsxFlowElement', 'mdxJsxTextElement']);
-const remarkLintNoConsecutiveBlankLines = lintRule(
+const remarkLintNoConsecutiveBlankLines = lintRule$1(
   {
     origin: 'remark-lint:no-consecutive-blank-lines',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-consecutive-blank-lines#readme'
   },
-  (tree, file) => {
-    visit$1(tree, (node) => {
-      if (!generated(node) && 'children' in node) {
-        const head = node.children[0];
-        if (head && !generated(head)) {
-          if (!unknownContainerSize.has(node.type)) {
-            compare(pointStart(node), pointStart(head), 0);
-          }
-          let index = -1;
-          while (++index < node.children.length) {
-            const previous = node.children[index - 1];
-            const child = node.children[index];
-            if (previous && !generated(previous) && !generated(child)) {
-              compare(pointEnd(previous), pointStart(child), 2);
-            }
-          }
-          const tail = node.children[node.children.length - 1];
-          if (
-            tail !== head &&
-            !generated(tail) &&
-            !unknownContainerSize.has(node.type)
-          ) {
-            compare(pointEnd(node), pointEnd(tail), 1);
+  function (tree, file) {
+    visitParents(tree, function (node, parents) {
+      const parent = parents.at(-1);
+      if (!parent) return
+      if (phrasing(node)) {
+        return SKIP
+      }
+      const siblings =  (parent.children);
+      const index = siblings.indexOf(node);
+      if (
+        index === 0 &&
+        parent.type !== 'containerDirective' &&
+        parent.type !== 'mdxJsxFlowElement'
+      ) {
+        const parentStart = pointStart(parent);
+        const start = pointStart(node);
+        if (parentStart && start) {
+          const difference =
+            start.line -
+            parentStart.line -
+            (parent.type === 'footnoteDefinition' ? 1 : 0);
+          if (difference > 0) {
+            file.message(
+              'Unexpected `' +
+                difference +
+                '` blank ' +
+                pluralize('line', difference) +
+                ' before node, expected `0` blank lines, remove `' +
+                difference +
+                '` blank ' +
+                pluralize('line', difference),
+              {ancestors: [...parents, node], place: start}
+            );
           }
         }
       }
-    });
-    function compare(start, end, max) {
-      const diff = end.line - start.line;
-      const lines = Math.abs(diff) - max;
-      if (lines > 0) {
-        file.message(
-          'Remove ' +
-            lines +
-            ' ' +
-            plural('line', Math.abs(lines)) +
-            ' ' +
-            (diff > 0 ? 'before' : 'after') +
-            ' node',
-          end
-        );
+      const next = siblings[index + 1];
+      const end = pointEnd(node);
+      const nextStart = pointStart(next);
+      if (end && nextStart) {
+        const difference = nextStart.line - end.line - 2;
+        if (difference > 0) {
+          const actual = difference + 1;
+          file.message(
+            'Unexpected `' +
+              actual +
+              '` blank ' +
+              pluralize('line', actual) +
+              ' before node, expected up to `1` blank line, remove `' +
+              difference +
+              '` blank ' +
+              pluralize('line', difference),
+            {ancestors: [...parents, next], place: nextStart}
+          );
+        }
       }
-    }
+      const parentEnd = pointEnd(parent);
+      if (
+        !next &&
+        parentEnd &&
+        end &&
+        parent.type !== 'containerDirective' &&
+        parent.type !== 'mdxJsxFlowElement'
+      ) {
+        const difference =
+          parentEnd.line - end.line - (parent.type === 'blockquote' ? 0 : 1);
+        if (difference > 0) {
+          file.message(
+            'Unexpected `' +
+              difference +
+              '` blank ' +
+              pluralize('line', difference) +
+              ' after node, expected `0` blank lines, remove `' +
+              difference +
+              '` blank ' +
+              pluralize('line', difference),
+            {ancestors: [...parents, node], place: end}
+          );
+        }
+      }
+    });
   }
 );
-var remarkLintNoConsecutiveBlankLines$1 = remarkLintNoConsecutiveBlankLines;
 
 /**
+ * remark-lint rule to warn when file names start with `a`, `the`, and such.
+ *
+ * ## What is this?
+ *
+ * This package checks file names.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that file names do not start with
- *  articles (`a`, `the`, etc).
+ * You can use this package to check that file names are consistent.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintNoFileNameArticles)`
+ *
+ * Warn when file names start with `a`, `the`, and such.
+ *
+ * ###### Parameters
+ *
  * There are no options.
  *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * [api-remark-lint-no-file-name-articles]: #unifieduseremarklintnofilenamearticles
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
+ *
  * @module no-file-name-articles
- * @summary
- *   remark-lint rule to warn when file names start with articles.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "title.md"}
  *
  * @example
- *   {"name": "a-title.md", "label": "output", "positionless": true}
+ *   {"label": "output", "name": "a-title.md", "positionless": true}
  *
- *   1:1: Do not start file names with `a`
- *
- * @example
- *   {"name": "the-title.md", "label": "output", "positionless": true}
- *
- *   1:1: Do not start file names with `the`
+ *   1:1: Unexpected file name starting with `a`, remove it
  *
  * @example
- *   {"name": "teh-title.md", "label": "output", "positionless": true}
+ *   {"label": "output", "name": "the-title.md", "positionless": true}
  *
- *   1:1: Do not start file names with `teh`
+ *   1:1: Unexpected file name starting with `the`, remove it
  *
  * @example
- *   {"name": "an-article.md", "label": "output", "positionless": true}
+ *   {"label": "output", "name": "an-article.md", "positionless": true}
  *
- *   1:1: Do not start file names with `an`
+ *   1:1: Unexpected file name starting with `an`, remove it
  */
-const remarkLintNoFileNameArticles = lintRule(
+const remarkLintNoFileNameArticles = lintRule$1(
   {
     origin: 'remark-lint:no-file-name-articles',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-file-name-articles#readme'
   },
-  (_, file) => {
-    const match = file.stem && file.stem.match(/^(the|teh|an?)\b/i);
+  function (_, file) {
+    const match = file.stem && file.stem.match(/^(?:the|teh|an?)\b/i);
     if (match) {
-      file.message('Do not start file names with `' + match[0] + '`');
+      file.message(
+        'Unexpected file name starting with `' + match[0] + '`, remove it'
+      );
     }
   }
 );
-var remarkLintNoFileNameArticles$1 = remarkLintNoFileNameArticles;
 
 /**
+ * remark-lint rule to warn when file names contain consecutive dashes.
+ *
+ * ## What is this?
+ *
+ * This package checks file names.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that no consecutive dashes appear in
- * file names.
+ * You can use this package to check that file names are consistent.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintNoFileNameConsecutiveDashes)`
+ *
+ * Warn when file names contain consecutive dashes.
+ *
+ * ###### Parameters
+ *
  * There are no options.
  *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * [api-remark-lint-no-file-name-consecutive-dashes]: #unifieduseremarklintnofilenameconsecutivedashes
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
+ *
  * @module no-file-name-consecutive-dashes
- * @summary
- *   remark-lint rule to warn when consecutive dashes appear in file names.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "plug-ins.md"}
  *
  * @example
  *   {"name": "plug--ins.md", "label": "output", "positionless": true}
  *
- *   1:1: Do not use consecutive dashes in a file name
+ *   1:1: Unexpected consecutive dashes in a file name, expected `-`
  */
-const remarkLintNoFileNameConsecutiveDashes = lintRule(
+const remarkLintNoFileNameConsecutiveDashes = lintRule$1(
   {
     origin: 'remark-lint:no-file-name-consecutive-dashes',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-file-name-consecutive-dashes#readme'
   },
-  (_, file) => {
+  function (_, file) {
     if (file.stem && /-{2,}/.test(file.stem)) {
-      file.message('Do not use consecutive dashes in a file name');
+      file.message('Unexpected consecutive dashes in a file name, expected `-`');
     }
   }
 );
-var remarkLintNoFileNameConsecutiveDashes$1 = remarkLintNoFileNameConsecutiveDashes;
 
 /**
+ * remark-lint rule to warn when file names start or end with dashes.
+ *
+ * ## What is this?
+ *
+ * This package checks file names.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that no initial or final dashes appear in
- * file names.
+ * You can use this package to check that file names are consistent.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintNoFileNameOuterDashes)`
+ *
+ * Warn when file names start or end with dashes.
+ *
+ * ###### Parameters
+ *
  * There are no options.
  *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * [api-remark-lint-no-file-name-outer-dashes]: #unifieduseremarklintnofilenameouterdashes
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
+ *
  * @module no-file-name-outer-dashes
- * @summary
- *   remark-lint rule to warn when initial or final dashes appear in file names.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
- * @example
- *   {"name": "readme.md"}
  *
  * @example
- *   {"name": "-readme.md", "label": "output", "positionless": true}
- *
- *   1:1: Do not use initial or final dashes in a file name
+ *   {"name": "mercury-and-venus.md"}
  *
  * @example
- *   {"name": "readme-.md", "label": "output", "positionless": true}
+ *   {"label": "output", "name": "-mercury.md", "positionless": true}
  *
- *   1:1: Do not use initial or final dashes in a file name
+ *   1:1: Unexpected initial or final dashes in file name, expected dashes to join words
+ *
+ * @example
+ *   {"label": "output", "name": "venus-.md", "positionless": true}
+ *
+ *   1:1: Unexpected initial or final dashes in file name, expected dashes to join words
  */
-const remarkLintNofileNameOuterDashes = lintRule(
+const remarkLintNofileNameOuterDashes = lintRule$1(
   {
     origin: 'remark-lint:no-file-name-outer-dashes',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-file-name-outer-dashes#readme'
   },
-  (_, file) => {
+  function (_, file) {
     if (file.stem && /^-|-$/.test(file.stem)) {
-      file.message('Do not use initial or final dashes in a file name');
+      file.message(
+        'Unexpected initial or final dashes in file name, expected dashes to join words'
+      );
     }
   }
 );
-var remarkLintNofileNameOuterDashes$1 = remarkLintNofileNameOuterDashes;
 
 /**
+ * remark-lint rule to warn when headings are indented.
+ *
+ * ## What is this?
+ *
+ * This package checks the spaces before headings.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that headings are not indented.
+ * You can use this rule to check markdown code style.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintNoHeadingIndent)`
+ *
+ * Warn when headings are indented.
+ *
+ * ###### Parameters
+ *
  * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
@@ -15823,406 +16961,639 @@ var remarkLintNofileNameOuterDashes$1 = remarkLintNofileNameOuterDashes;
  * While it is possible to use an indent to headings on their text:
  *
  * ```markdown
- *    # One
- *   ## Two
- *  ### Three
- * #### Four
+ *    # Mercury
+ *   ## Venus
+ *  ### Earth
+ * #### Mars
  * ```
  *
- * …such style is uncommon, a bit hard to maintain, and it’s impossible to add a
- * heading with a rank of 5 as it would form indented code instead.
- * Hence, it’s recommended to not indent headings and to turn this rule on.
+ * …such style is uncommon,
+ * a bit hard to maintain,
+ * and it’s impossible to add a heading with a rank of 5 as it would form
+ * indented code instead.
+ * So it’s recommended to not indent headings and to turn this rule on.
  *
  * ## Fix
  *
- * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
- * formats all headings without indent.
+ * [`remark-stringify`][github-remark-stringify] formats headings without indent.
+ *
+ * [api-remark-lint-no-heading-indent]: #unifieduseremarklintnoheadingindent
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module no-heading-indent
- * @summary
- *   remark-lint rule to warn when headings are indented.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "ok.md"}
  *
- *   #·Hello world
+ *   #␠Mercury
  *
- *   Foo
+ *   Venus
  *   -----
  *
- *   #·Hello world·#
+ *   #␠Earth␠#
  *
- *   Bar
- *   =====
- *
- * @example
- *   {"name": "not-ok.md", "label": "input"}
- *
- *   ···# Hello world
- *
- *   ·Foo
- *   -----
- *
- *   ·# Hello world #
- *
- *   ···Bar
- *   =====
+ *   Mars
+ *   ====
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"label": "input", "name": "not-ok.md"}
  *
- *   1:4: Remove 3 spaces before this heading
- *   3:2: Remove 1 space before this heading
- *   6:2: Remove 1 space before this heading
- *   8:4: Remove 3 spaces before this heading
+ *   ␠␠␠# Mercury
+ *
+ *   ␠Venus
+ *   ------
+ *
+ *   ␠# Earth #
+ *
+ *   ␠␠␠Mars
+ *   ======
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *    1:4: Unexpected `3` spaces before heading, expected `0` spaces, remove `3` spaces
+ *    3:2: Unexpected `1` space before heading, expected `0` spaces, remove `1` space
+ *    6:2: Unexpected `1` space before heading, expected `0` spaces, remove `1` space
+ *    8:4: Unexpected `3` spaces before heading, expected `0` spaces, remove `3` spaces
  */
-const remarkLintNoHeadingIndent = lintRule(
+const remarkLintNoHeadingIndent = lintRule$1(
   {
     origin: 'remark-lint:no-heading-indent',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-heading-indent#readme'
   },
-  (tree, file) => {
-    visit$1(tree, 'heading', (node, _, parent) => {
-      if (generated(node) || (parent && parent.type !== 'root')) {
+  function (tree, file) {
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      const parent = parents[parents.length - 1];
+      const start = pointStart(node);
+      if (
+        !start ||
+        !parent ||
+        node.type !== 'heading' ||
+        parent.type !== 'root'
+      ) {
         return
       }
-      const diff = pointStart(node).column - 1;
-      if (diff) {
+      const actual = start.column - 1;
+      if (actual) {
         file.message(
-          'Remove ' +
-            diff +
-            ' ' +
-            plural('space', diff) +
-            ' before this heading',
-          pointStart(node)
+          'Unexpected `' +
+            actual +
+            '` ' +
+            pluralize('space', actual) +
+            ' before heading, expected `0` spaces, remove' +
+            ' `' +
+            actual +
+            '` ' +
+            pluralize('space', actual),
+          {ancestors: [...parents, node], place: start}
         );
       }
     });
   }
 );
-var remarkLintNoHeadingIndent$1 = remarkLintNoHeadingIndent;
 
 /**
+ * remark-lint rule to warn when top-level headings are used multiple times.
+ *
+ * ## What is this?
+ *
+ * This package checks that top-level headings are unique.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that no more than one top level heading
- * is used.
+ * You can use this package to check heading structure.
  *
  * ## API
  *
- * The following options (default: `1`) are accepted:
+ * ### `unified().use(remarkLintNoMultipleToplevelHeadings[, options])`
  *
- * *   `number` (example: `1`)
- *     — assumed top level heading rank
+ * Warn when top-level headings are used multiple times.
+ *
+ * ###### Parameters
+ *
+ * * `options` ([`Options`][api-options], default: `1`)
+ *   — configuration
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ### `Depth`
+ *
+ * Depth (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Depth = 1 | 2 | 3 | 4 | 5 | 6
+ * ```
+ *
+ * ### `Options`
+ *
+ * Configuration (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Options = Depth
+ * ```
  *
  * ## Recommendation
  *
- * Documents should almost always have one main heading, which is typically a
- * heading with a rank of `1`.
+ * Documents should almost always have one main heading,
+ * which is typically a heading with a rank of `1`.
+ *
+ * [api-depth]: #depth
+ * [api-options]: #options
+ * [api-remark-lint-no-multiple-toplevel-headings]: #unifieduseremarklintnomultipletoplevelheadings-options
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module no-multiple-toplevel-headings
- * @summary
- *   remark-lint rule to warn when more than one top level heading is used.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
- * @example
- *   {"name": "ok.md", "config": 1}
- *
- *   # Foo
- *
- *   ## Bar
  *
  * @example
- *   {"name": "not-ok.md", "config": 1, "label": "input"}
+ *   {"name": "ok.md"}
  *
- *   # Foo
+ *   # Mercury
  *
- *   # Bar
+ *   ## Venus
  *
  * @example
- *   {"name": "not-ok.md", "config": 1, "label": "output"}
+ *   {"label": "input", "name": "not-ok.md"}
  *
- *   3:1-3:6: Don’t use multiple top level headings (1:1)
+ *   # Venus
+ *
+ *   # Mercury
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   3:1-3:10: Unexpected duplicate toplevel heading, exected a single heading with rank `1`
+ *
+ * @example
+ *   {"config": 2, "label": "input", "name": "not-ok.md"}
+ *
+ *   ## Venus
+ *
+ *   ## Mercury
+ * @example
+ *   {"config": 2, "label": "output", "name": "not-ok.md"}
+ *
+ *   3:1-3:11: Unexpected duplicate toplevel heading, exected a single heading with rank `2`
+ *
+ * @example
+ *   {"label": "input", "name": "html.md"}
+ *
+ *   Venus <b>and</b> mercury.
+ *
+ *   <h1>Earth</h1>
+ *
+ *   <h1>Mars</h1>
+ * @example
+ *   {"label": "output", "name": "html.md"}
+ *
+ *   5:1-5:14: Unexpected duplicate toplevel heading, exected a single heading with rank `1`
+ *
+ * @example
+ *   {"label": "input", "mdx": true, "name": "mdx.mdx"}
+ *
+ *   Venus <b>and</b> mercury.
+ *
+ *   <h1>Earth</h1>
+ *   <h1>Mars</h1>
+ * @example
+ *   {"label": "output", "mdx": true, "name": "mdx.mdx"}
+ *
+ *   4:1-4:14: Unexpected duplicate toplevel heading, exected a single heading with rank `1`
  */
-const remarkLintNoMultipleToplevelHeadings = lintRule(
+const htmlRe = /<h([1-6])/;
+const jsxNameRe = /^h([1-6])$/;
+const remarkLintNoMultipleToplevelHeadings = lintRule$1(
   {
     origin: 'remark-lint:no-multiple-toplevel-headings',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-multiple-toplevel-headings#readme'
   },
-  (tree, file, option = 1) => {
-    let duplicate;
-    visit$1(tree, 'heading', (node) => {
-      if (!generated(node) && node.depth === option) {
-        if (duplicate) {
-          file.message(
-            'Don’t use multiple top level headings (' + duplicate + ')',
-            node
-          );
-        } else {
-          duplicate = stringifyPosition(pointStart(node));
+  function (tree, file, options) {
+    const option = options || 1;
+    let duplicateAncestors;
+    visitParents(tree, function (node, parents) {
+      let rank;
+      if (node.type === 'heading') {
+        rank = node.depth;
+      } else if (node.type === 'html') {
+        const results = node.value.match(htmlRe);
+        rank = results ?  (Number(results[1])) : undefined;
+      } else if (
+        (node.type === 'mdxJsxFlowElement' ||
+          node.type === 'mdxJsxTextElement') &&
+        node.name
+      ) {
+        const results = node.name.match(jsxNameRe);
+        rank = results ?  (Number(results[1])) : undefined;
+      }
+      if (rank) {
+        const ancestors = [...parents, node];
+        if (node.position && rank === option) {
+          if (duplicateAncestors) {
+            const duplicate = duplicateAncestors.at(-1);
+            file.message(
+              'Unexpected duplicate toplevel heading, exected a single heading with rank `' +
+                rank +
+                '`',
+              {
+                ancestors,
+                cause: new VFileMessage(
+                  'Toplevel heading already defined here',
+                  {
+                    ancestors: duplicateAncestors,
+                    place: duplicate.position,
+                    source: 'remark-lint',
+                    ruleId: 'no-multiple-toplevel-headings'
+                  }
+                ),
+                place: node.position
+              }
+            );
+          } else {
+            duplicateAncestors = ancestors;
+          }
         }
       }
     });
   }
 );
-var remarkLintNoMultipleToplevelHeadings$1 = remarkLintNoMultipleToplevelHeadings;
 
 /**
+ * remark-lint rule to warn when every line in shell code is preceded by `$`s.
+ *
+ * ## What is this?
+ *
+ * This package checks for `$` markers prefixing shell code,
+ * which are hard to copy/paste.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that not all lines in shell code are
- * preceded by dollars (`$`).
+ * You can use this package to check shell code blocks.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintNoShellDollars)`
+ *
+ * Warn when every line in shell code is preceded by `$`s.
+ *
+ * ###### Parameters
+ *
  * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
  * Dollars make copy/pasting hard.
- * Either put both dollars in front of some lines (to indicate shell commands)
- * and don’t put them in front of other lines, or use fenced code to indicate
- * shell commands on their own, followed by another fenced code that contains
- * just the output.
+ * Either put dollars in front of some lines (commands) and don’t put them in
+ * front of other lines (output),
+ * or use different code blocks for commands and output.
+ *
+ * [api-remark-lint-no-shell-dollars]: #unifieduseremarklintnoshelldollars
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module no-shell-dollars
- * @summary
- *   remark-lint rule to warn every line in shell code is preceded by `$`s.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "ok.md"}
  *
  *   ```bash
- *   echo a
+ *   echo "Mercury and Venus"
  *   ```
  *
  *   ```sh
- *   echo a
- *   echo a > file
+ *   echo "Mercury and Venus"
+ *   echo "Earth and Mars" > file
  *   ```
+ *
+ *   Mixed dollars for input lines and without for output is also OK:
  *
  *   ```zsh
- *   $ echo a
- *   a
- *   $ echo a > file
+ *   $ echo "Mercury and Venus"
+ *   Mercury and Venus
+ *   $ echo "Earth and Mars" > file
  *   ```
- *
- *   Some empty code:
  *
  *   ```command
  *   ```
- *
- *   It’s fine to use dollars in non-shell code.
  *
  *   ```js
  *   $('div').remove()
  *   ```
  *
  * @example
- *   {"name": "not-ok.md", "label": "input"}
+ *   {"label": "input", "name": "not-ok.md"}
  *
  *   ```sh
- *   $ echo a
+ *   $ echo "Mercury and Venus"
  *   ```
  *
  *   ```bash
- *   $ echo a
- *   $ echo a > file
+ *   $ echo "Mercury and Venus"
+ *   $ echo "Earth and Mars" > file
  *   ```
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"label": "output", "name": "not-ok.md"}
  *
- *   1:1-3:4: Do not use dollar signs before shell commands
- *   5:1-8:4: Do not use dollar signs before shell commands
+ *   1:1-3:4: Unexpected shell code with every line prefixed by `$`, expected different code for input and output
+ *   5:1-8:4: Unexpected shell code with every line prefixed by `$`, expected different code for input and output
  */
 const flags = new Set([
-  'sh',
   'bash',
   'bats',
-  'cgi',
   'command',
-  'fcgi',
+  'csh',
+  'ebuild',
+  'eclass',
   'ksh',
+  'sh',
+  'sh.in',
+  'tcsh',
   'tmux',
   'tool',
-  'zsh'
+  'zsh',
+  'zsh-theme',
+  'abuild',
+  'alpine-abuild',
+  'apkbuild',
+  'gentoo-ebuild',
+  'gentoo-eclass',
+  'openrc',
+  'openrc-runscript',
+  'shell',
+  'shell-script'
 ]);
-const remarkLintNoShellDollars = lintRule(
+const remarkLintNoShellDollars = lintRule$1(
   {
     origin: 'remark-lint:no-shell-dollars',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-shell-dollars#readme'
   },
-  (tree, file) => {
-    visit$1(tree, 'code', (node) => {
-      if (!generated(node) && node.lang && flags.has(node.lang)) {
-        const lines = node.value
-          .split('\n')
-          .filter((line) => line.trim().length > 0);
+  function (tree, file) {
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (
+        node.type === 'code' &&
+        node.position &&
+        node.lang &&
+        flags.has(node.lang)
+      ) {
+        const lines = node.value.split('\n');
         let index = -1;
-        if (lines.length === 0) {
-          return
-        }
+        let some = false;
         while (++index < lines.length) {
-          const line = lines[index];
-          if (line.trim() && !/^\s*\$\s*/.test(line)) {
-            return
-          }
+          const line = collapseWhiteSpace(lines[index], {
+            style: 'html',
+            trim: true
+          });
+          if (!line) continue
+          if (line.charCodeAt(0) !== 36 ) return
+          some = true;
         }
-        file.message('Do not use dollar signs before shell commands', node);
+        if (!some) return
+        file.message(
+          'Unexpected shell code with every line prefixed by `$`, expected different code for input and output',
+          {ancestors: [...parents, node], place: node.position}
+        );
       }
     });
   }
 );
-var remarkLintNoShellDollars$1 = remarkLintNoShellDollars;
 
 /**
+ * remark-lint rule to warn when GFM tables are indented.
+ *
+ * ## What is this?
+ *
+ * This package checks the indent of GFM tables.
+ * Tables are a GFM feature enabled with
+ * [`remark-gfm`][github-remark-gfm].
+ *
  * ## When should I use this?
  *
- * You can use this package to check that tables are not indented.
- * Tables are a GFM feature enabled with
- * [`remark-gfm`](https://github.com/remarkjs/remark-gfm).
+ * You can use this package to check that tables are consistent.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintNoTableIndentation)`
+ *
+ * Warn when GFM tables are indented.
+ *
+ * ###### Parameters
+ *
  * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
  * There is no specific handling of indented tables (or anything else) in
  * markdown.
- * Hence, it’s recommended to not indent tables and to turn this rule on.
+ * So it’s recommended to not indent tables and to turn this rule on.
  *
  * ## Fix
  *
- * [`remark-gfm`](https://github.com/remarkjs/remark-gfm)
- * formats all tables without indent.
+ * [`remark-stringify`][github-remark-stringify] with
+ * [`remark-gfm`][github-remark-gfm] formats all tables without indent.
+ *
+ * [api-remark-lint-no-table-indentation]: #unifieduseremarklintnotableindentation
+ * [github-remark-gfm]: https://github.com/remarkjs/remark-gfm
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module no-table-indentation
- * @summary
- *   remark-lint rule to warn when tables are indented.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "ok.md", "gfm": true}
  *
- *   Paragraph.
- *
- *   | A     | B     |
- *   | ----- | ----- |
- *   | Alpha | Bravo |
+ *   | Planet  | Mean anomaly (°) |
+ *   | ------- | ---------------: |
+ *   | Mercury |          174 796 |
  *
  * @example
- *   {"name": "not-ok.md", "label": "input", "gfm": true}
+ *   {"gfm": true, "label": "input", "name": "not-ok.md"}
  *
- *   Paragraph.
- *
- *   ···| A     | B     |
- *   ···| ----- | ----- |
- *   ···| Alpha | Bravo |
+ *   ␠| Planet  | Mean anomaly (°) |
+ *   ␠␠| ------- | ---------------: |
+ *   ␠␠␠| Mercury |          174 796 |
  *
  * @example
- *   {"name": "not-ok.md", "label": "output", "gfm": true}
+ *   {"gfm": true, "label": "output", "name": "not-ok.md"}
  *
- *   3:4: Do not indent table rows
- *   4:4: Do not indent table rows
- *   5:4: Do not indent table rows
- *
- * @example
- *   {"name": "not-ok-blockquote.md", "label": "input", "gfm": true}
- *
- *   >··| A |
- *   >·| - |
+ *   1:2: Unexpected `1` extra space before table row, remove `1` space
+ *   2:3: Unexpected `2` extra spaces before table row, remove `2` spaces
+ *   3:4: Unexpected `3` extra spaces before table row, remove `3` spaces
  *
  * @example
- *   {"name": "not-ok-blockquote.md", "label": "output", "gfm": true}
+ *   {"gfm": true, "label": "input", "name": "blockquote.md"}
  *
- *   1:4: Do not indent table rows
- *
- * @example
- *   {"name": "not-ok-list.md", "label": "input", "gfm": true}
- *
- *   -···paragraph
- *
- *   ·····| A |
- *   ····| - |
+ *   >␠| Planet  |
+ *   >␠␠| ------- |
  *
  * @example
- *   {"name": "not-ok-list.md", "label": "output", "gfm": true}
+ *   {"gfm": true, "label": "output", "name": "blockquote.md"}
  *
- *   3:6: Do not indent table rows
+ *   2:4: Unexpected `1` extra space before table row, remove `1` space
+ *
+ * @example
+ *   {"gfm": true, "label": "input", "name": "list.md"}
+ *
+ *   *␠| Planet  |
+ *   ␠␠␠| ------- |
+ *
+ * @example
+ *   {"gfm": true, "label": "output", "name": "list.md"}
+ *
+ *   2:4: Unexpected `1` extra space before table row, remove `1` space
  */
-const remarkLintNoTableIndentation = lintRule(
+const remarkLintNoTableIndentation = lintRule$1(
   {
     origin: 'remark-lint:no-table-indentation',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-table-indentation#readme'
   },
-  (tree, file) => {
+  function (tree, file) {
     const value = String(file);
-    const loc = location(value);
-    visit$1(tree, 'table', (node, _, parent) => {
-      const end = pointEnd(node).line;
-      let line = pointStart(node).line;
-      let column = 0;
-      if (parent && parent.type === 'root') {
+    const locations = location(value);
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (node.type !== 'table') return
+      const parent = parents.at(-1);
+      const end = pointEnd(node);
+      const start = pointStart(node);
+      if (!parent || !end || !start) return
+      const parentHead = parent.children[0];
+      let line = start.line;
+      let column;
+      if (parent.type === 'root') {
         column = 1;
-      } else if (parent && parent.type === 'blockquote') {
-        column = pointStart(parent).column + 2;
-      } else if (parent && parent.type === 'listItem') {
-        column = pointStart(parent.children[0]).column;
-        if (parent.children[0] === node) {
-          line++;
+      } else if (parent.type === 'blockquote') {
+        const parentStart = pointStart(parent);
+        if (parentStart) {
+          column = parentStart.column + 2;
         }
-      }
-      if (!column || !line) {
-        return
-      }
-      while (line <= end) {
-        let offset = loc.toOffset({line, column});
-        const lineColumn = offset;
-        while (/[ \t]/.test(value.charAt(offset - 1))) {
-          offset--;
-        }
-        if (!offset || /[\r\n>]/.test(value.charAt(offset - 1))) {
-          offset = lineColumn;
-          while (/[ \t]/.test(value.charAt(offset))) {
-            offset++;
+      } else if (parent.type === 'listItem') {
+        const headStart = pointStart(parentHead);
+        if (headStart) {
+          column = headStart.column;
+          if (parentHead === node) {
+            line++;
           }
-          if (lineColumn !== offset) {
-            file.message('Do not indent table rows', loc.toPoint(offset));
+        }
+      }
+      if (!column) return
+      while (line <= end.line) {
+        let index = locations.toOffset({line, column});
+        if (typeof index !== 'number') continue
+        const expected = index;
+        let code = value.charCodeAt(index - 1);
+        while (code === 9  || code === 32 ) {
+          index--;
+          code = value.charCodeAt(index - 1);
+        }
+        if (
+          code === 10  ||
+          code === 13  ||
+          code === 62  ||
+          Number.isNaN(code)
+        ) {
+          let actual = expected;
+          code = value.charCodeAt(actual);
+          while (code === 9  || code === 32 ) {
+            code = value.charCodeAt(++actual);
+          }
+          const difference = actual - expected;
+          if (difference !== 0) {
+            file.message(
+              'Unexpected `' +
+                difference +
+                '` extra ' +
+                pluralize('space', difference) +
+                ' before table row, remove `' +
+                difference +
+                '` ' +
+                pluralize('space', difference),
+              {
+                ancestors: [...parents, node],
+                place: {
+                  line,
+                  column: column + difference,
+                  offset: actual
+                }
+              }
+            );
           }
         }
         line++;
       }
-      return SKIP$1
+      return SKIP
     });
   }
 );
-var remarkLintNoTableIndentation$1 = remarkLintNoTableIndentation;
 
 /**
+ * remark-lint rule to warn when tabs are used.
+ *
+ * ## What is this?
+ *
+ * This package checks for tabs.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that tabs are not used.
+ * You can use this package to check tabs.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintNoTabs)`
+ *
+ * Warn when tabs are used.
+ *
+ * ###### Parameters
+ *
  * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
- * Regardless of the debate in other languages of whether to use tabs vs.
- * spaces, when it comes to markdown, tabs do not work as expected.
- * Largely around contains such as block quotes and lists.
+ * Regardless of the debate in other languages of whether to use tabs versus
+ * spaces,
+ * when it comes to markdown,
+ * tabs do not work as expected.
+ * Largely around things such as block quotes, lists, and indented code.
+ *
  * Take for example block quotes: `>\ta` gives a paragraph with the text `a`
- * in a blockquote, so one might expect that `>\t\ta` results in indented code
- * with the text `a` in a block quote.
+ * in a blockquote,
+ * so one might expect that `>\t\ta` results in indented code with the text `a`
+ * in a block quote.
  *
  * ```markdown
  * >\ta
@@ -16242,11 +17613,14 @@ var remarkLintNoTableIndentation$1 = remarkLintNoTableIndentation;
  * </blockquote>
  * ```
  *
- * Because markdown uses a hardcoded tab size of 4, the first tab could be
- * represented as 3 spaces (because there’s a `>` before).
+ * Because markdown uses a hardcoded tab size of 4,
+ * the first tab could be represented as 3 spaces (because there’s a `>`
+ * before).
  * One of those “spaces” is taken because block quotes allow the `>` to be
- * followed by one space, leaving 2 spaces.
- * The next tab can be represented as 4 spaces, so together we have 6 spaces.
+ * followed by one space,
+ * leaving 2 spaces.
+ * The next tab can be represented as 4 spaces,
+ * so together we have 6 spaces.
  * The indented code uses 4 spaces, so there are two spaces left, which are
  * shown in the indented code.
  *
@@ -16255,65 +17629,48 @@ var remarkLintNoTableIndentation$1 = remarkLintNoTableIndentation;
  * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
  * uses spaces exclusively for indentation.
  *
+ * [api-remark-lint-no-tabs]: #unifieduseremarklintnotabs
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
+ *
  * @module no-tabs
- * @summary
- *   remark-lint rule to warn when tabs are used.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "ok.md"}
  *
- *   Foo Bar
- *
- *   ····Foo
+ *   ␠␠␠␠mercury()
  *
  * @example
- *   {"name": "not-ok.md", "label": "input", "positionless": true}
+ *   {"label": "input", "name": "not-ok.md", "positionless": true}
  *
- *   »Here's one before a code block.
+ *   ␉mercury()
  *
- *   Here's a tab:», and here is another:».
- *
- *   And this is in `inline»code`.
- *
- *   >»This is in a block quote.
- *
- *   *»And…
- *
- *   »1.»in a list.
- *
- *   And this is a tab as the last character.»
- *
+ *   Venus␉and Earth.
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"label": "output", "name": "not-ok.md"}
  *
- *   1:1: Use spaces instead of tabs
- *   3:14: Use spaces instead of tabs
- *   3:37: Use spaces instead of tabs
- *   5:23: Use spaces instead of tabs
- *   7:2: Use spaces instead of tabs
- *   9:2: Use spaces instead of tabs
- *   11:1: Use spaces instead of tabs
- *   11:4: Use spaces instead of tabs
- *   13:41: Use spaces instead of tabs
+ *   1:1: Unexpected tab (`\t`), expected spaces
+ *   3:6: Unexpected tab (`\t`), expected spaces
  */
-const remarkLintNoTabs = lintRule(
+const remarkLintNoTabs = lintRule$1(
   {
     origin: 'remark-lint:no-tabs',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-no-tabs#readme'
   },
-  (_, file) => {
+  function (_, file) {
     const value = String(file);
     const toPoint = location(file).toPoint;
     let index = value.indexOf('\t');
     while (index !== -1) {
-      file.message('Use spaces instead of tabs', toPoint(index));
+      file.message('Unexpected tab (`\\t`), expected spaces', {
+        place: toPoint(index)
+      });
       index = value.indexOf('\t', index + 1);
     }
   }
 );
-var remarkLintNoTabs$1 = remarkLintNoTabs;
 
 var sliced$1 = function (args, slice, sliceEnd) {
   var ret = [];
@@ -16555,7 +17912,7 @@ function factory(id, rule) {
   attacher.displayName = id;
   return attacher
   function attacher(raw) {
-    var config = coerce(ruleId, raw);
+    var config = coerce$1(ruleId, raw);
     var severity = config[0];
     var options = config[1];
     var fatal = severity === 2;
@@ -16583,7 +17940,7 @@ function factory(id, rule) {
     }
   }
 }
-function coerce(name, value) {
+function coerce$1(name, value) {
   var def = 1;
   var result;
   var level;
@@ -16659,7 +18016,7 @@ function* getLinksRecursively(node) {
   }
 }
 function validateLinks(tree, vfile) {
-  const currentFileURL = pathToFileURL(path$1.join(vfile.cwd, vfile.path));
+  const currentFileURL = pathToFileURL(path$2.join(vfile.cwd, vfile.path));
   let previousDefinitionLabel;
   for (const node of getLinksRecursively(tree)) {
     if (node.url[0] !== "#") {
@@ -16672,7 +18029,7 @@ function validateLinks(tree, vfile) {
           : "#";
         vfile.message(
           `Self-reference must start with hash (expected "${expected}", got "${node.url}")`,
-          node
+          node,
         );
       }
     }
@@ -16680,16 +18037,16 @@ function validateLinks(tree, vfile) {
       if (previousDefinitionLabel && previousDefinitionLabel > node.label) {
         vfile.message(
           `Unordered reference ("${node.label}" should be before "${previousDefinitionLabel}")`,
-          node
+          node,
         );
       }
       previousDefinitionLabel = node.label;
     }
   }
 }
-const remarkLintNodejsLinks = lintRule(
+const remarkLintNodejsLinks = lintRule$1(
   "remark-lint:nodejs-links",
-  validateLinks
+  validateLinks,
 );
 
 /*! js-yaml 4.1.0 https://github.com/nodeca/js-yaml @license MIT */
@@ -19518,6 +20875,7 @@ const MAX_LENGTH$1 = 256;
 const MAX_SAFE_INTEGER$1 = Number.MAX_SAFE_INTEGER ||
  9007199254740991;
 const MAX_SAFE_COMPONENT_LENGTH = 16;
+const MAX_SAFE_BUILD_LENGTH = MAX_LENGTH$1 - 6;
 const RELEASE_TYPES = [
   'major',
   'premajor',
@@ -19530,6 +20888,7 @@ const RELEASE_TYPES = [
 var constants = {
   MAX_LENGTH: MAX_LENGTH$1,
   MAX_SAFE_COMPONENT_LENGTH,
+  MAX_SAFE_BUILD_LENGTH,
   MAX_SAFE_INTEGER: MAX_SAFE_INTEGER$1,
   RELEASE_TYPES,
   SEMVER_SPEC_VERSION,
@@ -19541,23 +20900,44 @@ getDefaultExportFromCjs(constants);
 var re$1 = {exports: {}};
 
 (function (module, exports) {
-	const { MAX_SAFE_COMPONENT_LENGTH } = constants;
+	const {
+	  MAX_SAFE_COMPONENT_LENGTH,
+	  MAX_SAFE_BUILD_LENGTH,
+	  MAX_LENGTH,
+	} = constants;
 	const debug = debug_1;
 	exports = module.exports = {};
 	const re = exports.re = [];
+	const safeRe = exports.safeRe = [];
 	const src = exports.src = [];
 	const t = exports.t = {};
 	let R = 0;
+	const LETTERDASHNUMBER = '[a-zA-Z0-9-]';
+	const safeRegexReplacements = [
+	  ['\\s', 1],
+	  ['\\d', MAX_LENGTH],
+	  [LETTERDASHNUMBER, MAX_SAFE_BUILD_LENGTH],
+	];
+	const makeSafeRegex = (value) => {
+	  for (const [token, max] of safeRegexReplacements) {
+	    value = value
+	      .split(`${token}*`).join(`${token}{0,${max}}`)
+	      .split(`${token}+`).join(`${token}{1,${max}}`);
+	  }
+	  return value
+	};
 	const createToken = (name, value, isGlobal) => {
+	  const safe = makeSafeRegex(value);
 	  const index = R++;
 	  debug(name, index, value);
 	  t[name] = index;
 	  src[index] = value;
 	  re[index] = new RegExp(value, isGlobal ? 'g' : undefined);
+	  safeRe[index] = new RegExp(safe, isGlobal ? 'g' : undefined);
 	};
 	createToken('NUMERICIDENTIFIER', '0|[1-9]\\d*');
-	createToken('NUMERICIDENTIFIERLOOSE', '[0-9]+');
-	createToken('NONNUMERICIDENTIFIER', '\\d*[a-zA-Z-][a-zA-Z0-9-]*');
+	createToken('NUMERICIDENTIFIERLOOSE', '\\d+');
+	createToken('NONNUMERICIDENTIFIER', `\\d*[a-zA-Z-]${LETTERDASHNUMBER}*`);
 	createToken('MAINVERSION', `(${src[t.NUMERICIDENTIFIER]})\\.` +
 	                   `(${src[t.NUMERICIDENTIFIER]})\\.` +
 	                   `(${src[t.NUMERICIDENTIFIER]})`);
@@ -19572,7 +20952,7 @@ var re$1 = {exports: {}};
 	}(?:\\.${src[t.PRERELEASEIDENTIFIER]})*))`);
 	createToken('PRERELEASELOOSE', `(?:-?(${src[t.PRERELEASEIDENTIFIERLOOSE]
 	}(?:\\.${src[t.PRERELEASEIDENTIFIERLOOSE]})*))`);
-	createToken('BUILDIDENTIFIER', '[0-9A-Za-z-]+');
+	createToken('BUILDIDENTIFIER', `${LETTERDASHNUMBER}+`);
 	createToken('BUILD', `(?:\\+(${src[t.BUILDIDENTIFIER]
 	}(?:\\.${src[t.BUILDIDENTIFIER]})*))`);
 	createToken('FULLPLAIN', `v?${src[t.MAINVERSION]
@@ -19600,12 +20980,17 @@ var re$1 = {exports: {}};
 	                        `)?)?`);
 	createToken('XRANGE', `^${src[t.GTLT]}\\s*${src[t.XRANGEPLAIN]}$`);
 	createToken('XRANGELOOSE', `^${src[t.GTLT]}\\s*${src[t.XRANGEPLAINLOOSE]}$`);
-	createToken('COERCE', `${'(^|[^\\d])' +
+	createToken('COERCEPLAIN', `${'(^|[^\\d])' +
 	              '(\\d{1,'}${MAX_SAFE_COMPONENT_LENGTH}})` +
 	              `(?:\\.(\\d{1,${MAX_SAFE_COMPONENT_LENGTH}}))?` +
-	              `(?:\\.(\\d{1,${MAX_SAFE_COMPONENT_LENGTH}}))?` +
+	              `(?:\\.(\\d{1,${MAX_SAFE_COMPONENT_LENGTH}}))?`);
+	createToken('COERCE', `${src[t.COERCEPLAIN]}(?:$|[^\\d])`);
+	createToken('COERCEFULL', src[t.COERCEPLAIN] +
+	              `(?:${src[t.PRERELEASE]})?` +
+	              `(?:${src[t.BUILD]})?` +
 	              `(?:$|[^\\d])`);
 	createToken('COERCERTL', src[t.COERCE], true);
+	createToken('COERCERTLFULL', src[t.COERCEFULL], true);
 	createToken('LONETILDE', '(?:~>?)');
 	createToken('TILDETRIM', `(\\s*)${src[t.LONETILDE]}\\s+`, true);
 	exports.tildeTrimReplace = '$1~';
@@ -19673,7 +21058,7 @@ getDefaultExportFromCjs(identifiers);
 
 const debug = debug_1;
 const { MAX_LENGTH, MAX_SAFE_INTEGER } = constants;
-const { re, t } = reExports;
+const { safeRe: re, t } = reExports;
 const parseOptions = parseOptions_1;
 const { compareIdentifiers } = identifiers;
 let SemVer$2 = class SemVer {
@@ -19801,7 +21186,7 @@ let SemVer$2 = class SemVer {
     do {
       const a = this.build[i];
       const b = other.build[i];
-      debug('prerelease compare', i, a, b);
+      debug('build compare', i, a, b);
       if (a === undefined && b === undefined) {
         return 0
       } else if (b === undefined) {
@@ -19906,8 +21291,10 @@ let SemVer$2 = class SemVer {
       default:
         throw new Error(`invalid increment argument: ${release}`)
     }
-    this.format();
-    this.raw = this.version;
+    this.raw = this.format();
+    if (this.build.length) {
+      this.raw += `+${this.build.join('.')}`;
+    }
     return this
   }
 };
@@ -19932,13 +21319,13 @@ var parse_1 = parse;
 var semverParse = getDefaultExportFromCjs(parse_1);
 
 const SemVer = semver;
-const compare$2 = (a, b, loose) =>
+const compare$1 = (a, b, loose) =>
   new SemVer(a, loose).compare(new SemVer(b, loose));
-var compare_1 = compare$2;
+var compare_1 = compare$1;
 getDefaultExportFromCjs(compare_1);
 
-const compare$1 = compare_1;
-const lt = (a, b, loose) => compare$1(a, b, loose) < 0;
+const compare = compare_1;
+const lt = (a, b, loose) => compare(a, b, loose) < 0;
 var lt_1 = lt;
 var semverLt = getDefaultExportFromCjs(lt_1);
 
@@ -19952,7 +21339,7 @@ const allowedKeys = [
 const changesExpectedKeys = ["version", "pr-url", "description"];
 const VERSION_PLACEHOLDER = "REPLACEME";
 const MAX_SAFE_SEMVER_VERSION = semverParse(
-  Array.from({ length: 3 }, () => Number.MAX_SAFE_INTEGER).join(".")
+  Array.from({ length: 3 }, () => Number.MAX_SAFE_INTEGER).join("."),
 );
 const validVersionNumberRegex = /^v\d+\.\d+\.\d+$/;
 const prUrlRegex = new RegExp("^https://github.com/nodejs/node/pull/\\d+$");
@@ -19962,7 +21349,7 @@ let invalidVersionMessage = "version(s) must respect the pattern `vx.x.x` or";
 if (process.env.NODE_RELEASED_VERSIONS) {
   console.log("Using release list from env...");
   releasedVersions = process.env.NODE_RELEASED_VERSIONS.split(",").map(
-    (v) => `v${v}`
+    (v) => `v${v}`,
   );
   invalidVersionMessage = `version not listed in the changelogs, `;
 }
@@ -20000,7 +21387,7 @@ function areVersionsUnordered(versions) {
     if (
       semverLt(
         getValidSemver(versions[index - 1]),
-        getValidSemver(versions[index])
+        getValidSemver(versions[index]),
       )
     ) {
       return true;
@@ -20020,7 +21407,7 @@ function validateSecurityChange(file, node, change, index) {
     if (typeof change.commit !== "string" || isNaN(`0x${change.commit}`)) {
       file.message(
         `changes[${index}]: Ill-formed security change commit ID`,
-        node
+        node,
       );
     }
     if (Object.keys(change)[1] === "commit") {
@@ -20034,7 +21421,7 @@ function validateSecurityChange(file, node, change, index) {
     file.message(
       `changes[${index}]: Invalid keys. Expected keys are: ` +
         securityChangeExpectedKeys.join(", "),
-      node
+      node,
     );
   }
 }
@@ -20056,7 +21443,7 @@ function validateChanges(file, node, changes) {
       file.message(
         `changes[${index}]: Invalid keys. Expected keys are: ` +
           changesExpectedKeys.join(", "),
-        node
+        node,
       );
     }
     if (containsInvalidVersionNumber(change.version)) {
@@ -20067,22 +21454,22 @@ function validateChanges(file, node, changes) {
     if (!isAncient && !isSecurityChange && !prUrlRegex.test(change["pr-url"])) {
       file.message(
         `changes[${index}]: PR-URL does not match the expected pattern`,
-        node
+        node,
       );
     }
     if (typeof change.description !== "string" || !change.description.length) {
       file.message(
         `changes[${index}]: must contain a non-empty description`,
-        node
+        node,
       );
     } else if (!change.description.endsWith(".")) {
       file.message(
         `changes[${index}]: description must end with a period`,
-        node
+        node,
       );
     }
     changesVersions.push(
-      Array.isArray(change.version) ? change.version[0] : change.version
+      Array.isArray(change.version) ? change.version[0] : change.version,
     );
   }
   if (areVersionsUnordered(changesVersions)) {
@@ -20095,14 +21482,14 @@ function validateMeta(node, file, meta) {
       file.message(
         "YAML dictionary contains illegal keys. Accepted values are: " +
           allowedKeys.join(", "),
-        node
+        node,
       );
       break;
     case kWrongKeyOrder:
       file.message(
         "YAML dictionary keys should be in this order: " +
           allowedKeys.join(", "),
-        node
+        node,
       );
       break;
   }
@@ -20114,7 +21501,7 @@ function validateMeta(node, file, meta) {
   if (containsInvalidVersionNumber(meta.deprecated)) {
     file.message(
       `Invalid \`deprecated\` value: ${invalidVersionMessage}`,
-      node
+      node,
     );
   } else if (areVersionsUnordered(meta.deprecated)) {
     file.message("Versions in `deprecated` list are not in order", node);
@@ -20129,11 +21516,11 @@ function validateMeta(node, file, meta) {
   }
 }
 function validateYAMLComments(tree, file) {
-  visit$1(tree, "html", function visitor(node) {
+  visit(tree, "html", function visitor(node) {
     if (node.value.startsWith("<!--YAML\n"))
       file.message(
         "Expected `<!-- YAML`, found `<!--YAML`. Please add a space",
-        node
+        node,
       );
     if (!node.value.startsWith("<!-- YAML\n")) return;
     try {
@@ -20144,10 +21531,72 @@ function validateYAMLComments(tree, file) {
     }
   });
 }
-const remarkLintNodejsYamlComments = lintRule(
+const remarkLintNodejsYamlComments = lintRule$1(
   "remark-lint:nodejs-yaml-comments",
-  validateYAMLComments
+  validateYAMLComments,
 );
+
+function lintRule(meta, rule) {
+  const id = meta ;
+  const url = undefined ;
+  const parts = id.split(':');
+  const source = parts[1] ? parts[0] : undefined;
+  const ruleId = parts[1];
+  Object.defineProperty(plugin, 'name', {value: id});
+  return plugin
+  function plugin(config) {
+    const [severity, options] = coerce(ruleId, config);
+    if (!severity) return
+    const fatal = severity === 2;
+    return (tree, file, next) => {
+      let index = file.messages.length - 1;
+      wrap(rule, (error) => {
+        const messages = file.messages;
+        if (error && !messages.includes(error)) {
+          try {
+            file.fail(error);
+          } catch {}
+        }
+        while (++index < messages.length) {
+          Object.assign(messages[index], {ruleId, source, fatal, url});
+        }
+        next();
+      })(tree, file, options);
+    }
+  }
+}
+function coerce(name, config) {
+  if (!Array.isArray(config)) return [1, config]
+  const [severity, ...options] = config;
+  switch (severity) {
+    case false:
+    case 'off':
+    case 0: {
+      return [0, ...options]
+    }
+    case true:
+    case 'on':
+    case 'warn':
+    case 1: {
+      return [1, ...options]
+    }
+    case 'error':
+    case 2: {
+      return [2, ...options]
+    }
+    default: {
+      if (typeof severity !== 'number') return [1, config]
+      throw new Error(
+        'Incorrect severity `' +
+          severity +
+          '` for `' +
+          name +
+          '`, ' +
+          'expected 0, 1, or 2'
+      )
+    }
+  }
+}
 
 const remarkLintProhibitedStrings = lintRule('remark-lint:prohibited-strings', prohibitedStrings);
 function testProhibited (val, content) {
@@ -20193,7 +21642,7 @@ function testProhibited (val, content) {
       if (replaceCaptureGroups) {
         yes = result[1].replace(new RegExp(no), yes);
       }
-      results.push({ result: result[1], index: result.index, yes: yes });
+      results.push({ result: result[1], index: result.index, yes });
     }
     result = re.exec(content);
   }
@@ -20201,7 +21650,7 @@ function testProhibited (val, content) {
 }
 function prohibitedStrings (ast, file, strings) {
   const myLocation = location(file);
-  visit$1(ast, 'text', checkText);
+  visit(ast, 'text', checkText);
   function checkText (node) {
     const content = node.value;
     const initial = pointStart(node).offset;
@@ -20221,230 +21670,405 @@ function prohibitedStrings (ast, file, strings) {
 }
 
 /**
+ * remark-lint rule to warn when thematic breaks (horizontal rules) are
+ * inconsistent.
+ *
+ * ## What is this?
+ *
+ * This package checks markers and whitespace of thematic rules.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that rules (thematic breaks, horizontal
- * rules) are consistent.
+ * You can use this package to check that thematic breaks are consistent.
  *
  * ## API
  *
- * The following options (default: `'consistent'`) are accepted:
+ * ### `unified().use(remarkLintRuleStyle[, options])`
  *
- * *   `string` (example: `'** * **'`, `'___'`)
- *     — thematic break to prefer
- * *   `'consistent'`
- *     — detect the first used style and warn when further rules differ
+ * Warn when thematic breaks (horizontal rules) are inconsistent.
+ *
+ * ###### Parameters
+ *
+ * * `options` ([`Options`][api-options], default: `'consistent'`)
+ *   — preferred style or whether to detect the first style and warn for
+ *   further differences
+ *
+ * ### `Options`
+ *
+ * Configuration (TypeScript type).
+ *
+ * * `'consistent'`
+ *   — detect the first used style and warn when further rules differ
+ * * `string` (example: `'** * **'`, `'___'`)
+ *   — thematic break to prefer
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Options = string | 'consistent'
+ * ```
  *
  * ## Recommendation
  *
- * Rules consist of a `*`, `-`, or `_` character, which occurs at least three
- * times with nothing else except for arbitrary spaces or tabs on a single line.
- * Using spaces, tabs, and more than three markers seems unnecessary work to
- * type out.
- * Because asterisks can be used as a marker for more markdown constructs,
+ * Rules consist of a `*`, `-`, or `_` character,
+ * which occurs at least three times with nothing else except for arbitrary
+ * spaces or tabs on a single line.
+ * Using spaces, tabs, or more than three markers is unnecessary work to type
+ * out.
+ * As asterisks can be used as a marker for more markdown constructs,
  * it’s recommended to use that for rules (and lists, emphasis, strong) too.
- * Due to this, it’s recommended to pass `'***'`.
+ * So it’s recommended to pass `'***'`.
  *
  * ## Fix
  *
- * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
- * formats rules with `***` by default.
+ * [`remark-stringify`][github-remark-stringify] formats rules with `***` by
+ * default.
  * There are three settings to control rules:
  *
- * *   [`rule`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify#optionsrule)
- *     (default: `'*'`) — marker
- * *   [`ruleRepetition`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify#optionsrulerepetition)
- *     (default: `3`) — repetitions
- * *   [`ruleSpaces`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify#optionsrulespaces)
- *     (default: `false`) — use spaces between markers
+ * * `rule` (default: `'*'`) — marker
+ * * `ruleRepetition` (default: `3`) — repetitions
+ * * `ruleSpaces` (default: `false`) — use spaces between markers
+ *
+ * [api-options]: #options
+ * [api-remark-lint-rule-style]: #unifieduseremarklintrulestyle-options
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module rule-style
- * @summary
- *   remark-lint rule to warn when rule markers are inconsistent.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
- *   {"name": "ok.md", "config": "* * *"}
+ *   {"name": "ok.md"}
+ *
+ *   Two rules:
  *
  *   * * *
  *
  *   * * *
  *
  * @example
- *   {"name": "ok.md", "config": "_______"}
+ *   {"config": "_______", "name": "ok.md"}
  *
  *   _______
  *
  *   _______
  *
  * @example
- *   {"name": "not-ok.md", "label": "input"}
+ *   {"label": "input", "name": "not-ok.md"}
  *
  *   ***
  *
  *   * * *
+ * @example
+ *   {"label": "output", "name": "not-ok.md"}
+ *
+ *   3:1-3:6: Unexpected thematic rule `* * *`, expected `***`
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"config": "🌍", "label": "output", "name": "not-ok.md", "positionless": true}
  *
- *   3:1-3:6: Rules should use `***`
- *
- * @example
- *   {"name": "not-ok.md", "label": "output", "config": "💩", "positionless": true}
- *
- *   1:1: Incorrect preferred rule style: provide a correct markdown rule or `'consistent'`
+ *   1:1: Unexpected value `🌍` for `options`, expected thematic rule or `'consistent'`
  */
-const remarkLintRuleStyle = lintRule(
+const remarkLintRuleStyle = lintRule$1(
   {
     origin: 'remark-lint:rule-style',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-rule-style#readme'
   },
-  (tree, file, option = 'consistent') => {
+  function (tree, file, options) {
     const value = String(file);
-    if (option !== 'consistent' && /[^-_* ]/.test(option)) {
+    let expected;
+    let cause;
+    if (options === null || options === undefined || options === 'consistent') ; else if (
+      /[^-_* ]/.test(options) ||
+      options.at(0) === ' ' ||
+      options.at(-1) === ' ' ||
+      options.replaceAll(' ', '').length < 3
+    ) {
       file.fail(
-        "Incorrect preferred rule style: provide a correct markdown rule or `'consistent'`"
+        'Unexpected value `' +
+          options +
+          "` for `options`, expected thematic rule or `'consistent'`"
       );
+    } else {
+      expected = options;
     }
-    visit$1(tree, 'thematicBreak', (node) => {
-      const initial = pointStart(node).offset;
-      const final = pointEnd(node).offset;
-      if (typeof initial === 'number' && typeof final === 'number') {
-        const rule = value.slice(initial, final);
-        if (option === 'consistent') {
-          option = rule;
-        } else if (rule !== option) {
-          file.message('Rules should use `' + option + '`', node);
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (node.type !== 'thematicBreak') return
+      const end = pointEnd(node);
+      const start = pointStart(node);
+      if (
+        start &&
+        end &&
+        typeof start.offset === 'number' &&
+        typeof end.offset === 'number'
+      ) {
+        const place = {start, end};
+        const actual = value.slice(start.offset, end.offset);
+        if (expected) {
+          if (actual !== expected) {
+            file.message(
+              'Unexpected thematic rule `' +
+                actual +
+                '`, expected `' +
+                expected +
+                '`',
+              {ancestors: [...parents, node], cause, place}
+            );
+          }
+        } else {
+          expected = actual;
+          cause = new VFileMessage(
+            'Thematic rule style `' +
+              expected +
+              "` first defined for `'consistent'` here",
+            {
+              ancestors: [...parents, node],
+              place,
+              ruleId: 'rule-style',
+              source: 'remark-lint'
+            }
+          );
         }
       }
     });
   }
 );
-var remarkLintRuleStyle$1 = remarkLintRuleStyle;
 
 /**
+ * remark-lint rule to warn when strong markers are inconsistent.
+ *
+ * ## What is this?
+ *
+ * This package checks the style of strong markers.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that strong markers are consistent.
+ * You can use this package to check that strong is consistent.
  *
  * ## API
  *
- * The following options (default: `'consistent'`) are accepted:
+ * ### `unified().use(remarkLintStrongMarker[, options])`
  *
- * *   `'*'`
- *     — prefer asterisks
- * *   `'_'`
- *     — prefer underscores
- * *   `'consistent'`
- *     — detect the first used style and warn when further strong differs
+ * Warn when strong markers are inconsistent.
+ *
+ * ###### Parameters
+ *
+ * * `options` ([`Options`][api-options], default: `'consistent'`)
+ *   — preferred style or whether to detect the first style and warn for
+ *   further differences
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ### `Marker`
+ *
+ * Marker (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Marker = '*' | '_'
+ * ```
+ *
+ * ### `Options`
+ *
+ * Configuration (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Options = Marker | 'consistent'
+ * ```
  *
  * ## Recommendation
  *
- * Underscores and asterisks work slightly different: asterisks can form strong
- * in more cases than underscores.
- * Because underscores are sometimes used to represent normal underscores inside
- * words, there are extra rules supporting that.
+ * Whether asterisks or underscores are used affects how and whether strong
+ * works.
+ * Underscores are sometimes used to represent normal underscores inside words,
+ * so there are extra rules in markdown to support that.
+ * Asterisks are not used in natural language,
+ * so they don’t need these rules,
+ * and thus can form strong in more cases.
  * Asterisks can also be used as the marker of more constructs than underscores:
  * lists.
- * Due to having simpler parsing rules, looking more like syntax, and that they
- * can be used for more constructs, it’s recommended to prefer asterisks.
+ * Due to having simpler parsing rules,
+ * looking more like syntax,
+ * and that they can be used for more constructs,
+ * it’s recommended to prefer asterisks.
  *
  * ## Fix
  *
- * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
- * formats strong with asterisks by default.
- * Pass
- * [`strong: '_'`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify#optionsstrong)
- * to always use underscores.
+ * [`remark-stringify`][github-remark-stringify] formats strong with asterisks
+ * by default.
+ * Pass `strong: '_'` to always use underscores.
+ *
+ * [api-marker]: #marker
+ * [api-options]: #options
+ * [api-remark-lint-strong-marker]: #unifieduseremarklintstrongmarker-options
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module strong-marker
- * @summary
- *   remark-lint rule to warn when strong markers are inconsistent.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
- * @example
- *   {"name": "ok.md"}
- *
- *   **foo** and **bar**.
  *
  * @example
- *   {"name": "also-ok.md"}
+ *   {"config": "*", "name": "ok-asterisk.md"}
  *
- *   __foo__ and __bar__.
- *
- * @example
- *   {"name": "ok.md", "config": "*"}
- *
- *   **foo**.
+ *   **Mercury**.
  *
  * @example
- *   {"name": "ok.md", "config": "_"}
+ *   {"config": "*", "label": "input", "name": "not-ok-asterisk.md"}
  *
- *   __foo__.
- *
- * @example
- *   {"name": "not-ok.md", "label": "input"}
- *
- *   **foo** and __bar__.
+ *   __Mercury__.
  *
  * @example
- *   {"name": "not-ok.md", "label": "output"}
+ *   {"config": "*", "label": "output", "name": "not-ok-asterisk.md"}
  *
- *   1:13-1:20: Strong should use `*` as a marker
+ *   1:1-1:12: Unexpected strong marker `_`, expected `*`
  *
  * @example
- *   {"name": "not-ok.md", "label": "output", "config": "💩", "positionless": true}
+ *   {"config": "_", "name": "ok-underscore.md"}
  *
- *   1:1: Incorrect strong marker `💩`: use either `'consistent'`, `'*'`, or `'_'`
+ *   __Mercury__.
+ *
+ * @example
+ *   {"config": "_", "label": "input", "name": "not-ok-underscore.md"}
+ *
+ *   **Mercury**.
+ *
+ * @example
+ *   {"config": "_", "label": "output", "name": "not-ok-underscore.md"}
+ *
+ *   1:1-1:12: Unexpected strong marker `*`, expected `_`
+ *
+ * @example
+ *   {"label": "input", "name": "not-ok-consistent.md"}
+ *
+ *   **Mercury** and __Venus__.
+ *
+ * @example
+ *   {"label": "output", "name": "not-ok-consistent.md"}
+ *
+ *   1:17-1:26: Unexpected strong marker `_`, expected `*`
+ *
+ * @example
+ *   {"config": "🌍", "label": "output", "name": "not-ok.md", "positionless": true}
+ *
+ *   1:1: Unexpected value `🌍` for `options`, expected `'*'`, `'_'`, or `'consistent'`
  */
-const remarkLintStrongMarker = lintRule(
+const remarkLintStrongMarker = lintRule$1(
   {
     origin: 'remark-lint:strong-marker',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-strong-marker#readme'
   },
-  (tree, file, option = 'consistent') => {
+  function (tree, file, options) {
     const value = String(file);
-    if (option !== '*' && option !== '_' && option !== 'consistent') {
+    let cause;
+    let expected;
+    if (options === null || options === undefined || options === 'consistent') ; else if (options === '*' || options === '_') {
+      expected = options;
+    } else {
       file.fail(
-        'Incorrect strong marker `' +
-          option +
-          "`: use either `'consistent'`, `'*'`, or `'_'`"
+        'Unexpected value `' +
+          options +
+          "` for `options`, expected `'*'`, `'_'`, or `'consistent'`"
       );
     }
-    visit$1(tree, 'strong', (node) => {
-      const start = pointStart(node).offset;
-      if (typeof start === 'number') {
-        const marker =  (value.charAt(start));
-        if (option === 'consistent') {
-          option = marker;
-        } else if (marker !== option) {
-          file.message('Strong should use `' + option + '` as a marker', node);
+    visitParents(tree, 'strong', function (node, parents) {
+      const start = pointStart(node);
+      if (start && typeof start.offset === 'number') {
+        const actual = value.charAt(start.offset);
+        if (actual !== '*' && actual !== '_') return
+        if (expected) {
+          if (actual !== expected) {
+            file.message(
+              'Unexpected strong marker `' +
+                actual +
+                '`, expected `' +
+                expected +
+                '`',
+              {ancestors: [...parents, node], cause, place: node.position}
+            );
+          }
+        } else {
+          expected = actual;
+          cause = new VFileMessage(
+            "Strong marker style `'" +
+              actual +
+              "'` first defined for `'consistent'` here",
+            {
+              ancestors: [...parents, node],
+              place: node.position,
+              ruleId: 'strong-marker',
+              source: 'remark-lint'
+            }
+          );
         }
       }
     });
   }
 );
-var remarkLintStrongMarker$1 = remarkLintStrongMarker;
 
 /**
+ * remark-lint rule to warn when GFM table cells are padded inconsistently.
+ *
+ * ## What is this?
+ *
+ * This package checks table cell padding.
+ * Tables are a GFM feature enabled with [`remark-gfm`][github-remark-gfm].
+ *
  * ## When should I use this?
  *
- * You can use this package to check that table cells are padded consistently.
- * Tables are a GFM feature enabled with
- * [`remark-gfm`](https://github.com/remarkjs/remark-gfm).
+ * You can use this package to check that tables are consistent.
  *
  * ## API
  *
- * The following options (default: `'consistent'`) are accepted:
+ * ### `unified().use(remarkLintTableCellPadding[, options])`
  *
- * *   `'padded'`
- *     — prefer at least one space between pipes and content
- * *   `'compact'`
- *     — prefer zero spaces between pipes and content
- * *   `'consistent'`
- *     — detect the first used style and warn when further tables differ
+ * Warn when GFM table cells are padded inconsistently.
+ *
+ * ###### Parameters
+ *
+ * * `options` ([`Options`][api-options], optional)
+ *   — preferred style or whether to detect the first style and warn for
+ *   further differences
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ### `Style`
+ *
+ * Style (TypeScript type).
+ *
+ * * `'compact'`
+ *   — prefer zero spaces between pipes and content
+ * * `'padded'`
+ *   — prefer at least one space between pipes and content
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Style = 'compact' | 'padded'
+ * ```
+ *
+ * ### `Options`
+ *
+ * Configuration (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Options = Style | 'consistent'
+ * ```
  *
  * ## Recommendation
  *
@@ -20453,382 +22077,889 @@ var remarkLintStrongMarker$1 = remarkLintStrongMarker;
  *
  * ## Fix
  *
- * [`remark-gfm`](https://github.com/remarkjs/remark-gfm)
- * formats all table cells as padded by default.
- * Pass
- * [`tableCellPadding: false`](https://github.com/remarkjs/remark-gfm#optionstablecellpadding)
- * to use a more compact style.
+ * [`remark-stringify`][github-remark-stringify] with
+ * [`remark-gfm`][github-remark-gfm] formats all table cells as padded by
+ * default.
+ * Pass `tableCellPadding: false` to use a more compact style.
+ *
+ * [api-options]: #options
+ * [api-style]: #style
+ * [api-remark-lint-table-cell-padding]: #unifieduseremarklinttablecellpadding-options
+ * [github-remark-gfm]: https://github.com/remarkjs/remark-gfm
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module table-cell-padding
- * @summary
- *   remark-lint rule to warn when table cells are inconsistently padded.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
- * @example
- *   {"name": "ok.md", "config": "padded", "gfm": true}
- *
- *   | A     | B     |
- *   | ----- | ----- |
- *   | Alpha | Bravo |
  *
  * @example
- *   {"name": "not-ok.md", "label": "input", "config": "padded", "gfm": true}
+ *   {"config": "padded", "gfm": true, "name": "ok.md"}
  *
- *   | A    |    B |
- *   | :----|----: |
- *   | Alpha|Bravo |
+ *   | Planet  | Symbol | Satellites | Mean anomaly (°) |
+ *   | ------- | :----- | :--------: | ---------------: |
+ *   | Mercury | ☿      |    None    |          174 796 |
  *
- *   | C      |    D |
- *   | :----- | ---: |
- *   |Charlie | Delta|
- *
- *   Too much padding isn’t good either:
- *
- *   | E     | F        |   G    |      H |
- *   | :---- | -------- | :----: | -----: |
- *   | Echo  | Foxtrot  |  Golf  |  Hotel |
+ *   | Planet | Symbol | Satellites | Mean anomaly (°) |
+ *   | - | :- | :-: | -: |
+ *   | Venus | ♀ | None | 50 115 |
  *
  * @example
- *   {"name": "not-ok.md", "label": "output", "config": "padded", "gfm": true}
+ *   {"config": "padded", "gfm": true, "label": "input", "name": "not-ok.md"}
  *
- *   3:8: Cell should be padded
- *   3:9: Cell should be padded
- *   7:2: Cell should be padded
- *   7:17: Cell should be padded
- *   13:7: Cell should be padded with 1 space, not 2
- *   13:18: Cell should be padded with 1 space, not 2
- *   13:23: Cell should be padded with 1 space, not 2
- *   13:27: Cell should be padded with 1 space, not 2
- *   13:32: Cell should be padded with 1 space, not 2
+ *   | Planet |
+ *   | -------|
+ *   | Mercury|
+ *
+ *   |Planet |
+ *   |------ |
+ *   |Venus  |
+ *
+ *   |  Planet  |
+ *   |  ------  |
+ *   |  Venus   |
+ * @example
+ *   {"config": "padded", "gfm": true, "label": "output", "name": "not-ok.md"}
+ *
+ *   2:10: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *   3:10: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *   5:2: Unexpected `0` spaces between cell edge and content, expected `1` space, add `1` space
+ *   6:2: Unexpected `0` spaces between cell edge and content, expected `1` space, add `1` space
+ *   7:2: Unexpected `0` spaces between cell edge and content, expected `1` space, add `1` space
+ *   9:4: Unexpected `2` spaces between cell edge and content, expected `1` space, remove `1` space
+ *   9:12: Unexpected `2` spaces between cell content and edge, expected `1` space, remove `1` space
+ *   10:4: Unexpected `2` spaces between cell edge and content, expected `1` space, remove `1` space
+ *   10:12: Unexpected `2` spaces between cell content and edge, expected `1` space, remove `1` space
+ *   11:4: Unexpected `2` spaces between cell edge and content, expected `1` space, remove `1` space
+ *   11:12: Unexpected `3` spaces between cell content and edge, expected between `1` (unaligned) and `2` (aligned) spaces, remove between `1` and `2` spaces
  *
  * @example
- *   {"name": "ok.md", "config": "compact", "gfm": true}
+ *   {"config": "compact", "gfm": true, "name": "ok.md"}
  *
- *   |A    |B    |
- *   |-----|-----|
- *   |Alpha|Bravo|
+ *   |Planet |Symbol|Satellites|Mean anomaly (°)|
+ *   |-------|:-----|:--------:|---------------:|
+ *   |Mercury|☿     |   None   |         174 796|
  *
- * @example
- *   {"name": "not-ok.md", "label": "input", "config": "compact", "gfm": true}
- *
- *   |   A    | B    |
- *   |   -----| -----|
- *   |   Alpha| Bravo|
- *
- *   |C      |     D|
- *   |:------|-----:|
- *   |Charlie|Delta |
+ *   |Planet|Symbol|Satellites|Mean anomaly (°)|
+ *   |-|:-|:-:|-:|
+ *   |Venus|♀|None|50 115|
  *
  * @example
- *   {"name": "not-ok.md", "label": "output", "config": "compact", "gfm": true}
+ *   {"config": "compact", "gfm": true, "label": "input", "name": "not-ok.md"}
  *
- *   3:5: Cell should be compact
- *   3:12: Cell should be compact
- *   7:15: Cell should be compact
+ *   | Planet |
+ *   | -------|
+ *   | Mercury|
+ *
+ *   |Planet |
+ *   |------ |
+ *   |Venus  |
+ *
+ *   |  Planet  |
+ *   |  ------  |
+ *   |  Venus   |
+ * @example
+ *   {"config": "compact", "gfm": true, "label": "output", "name": "not-ok.md"}
+ *
+ *   1:3: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   2:3: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   3:3: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   5:9: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   6:9: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   7:9: Unexpected `2` spaces between cell content and edge, expected between `0` (unaligned) and `1` (aligned) space, remove between `1` and `2` spaces
+ *   9:4: Unexpected `2` spaces between cell edge and content, expected `0` spaces, remove `2` spaces
+ *   9:12: Unexpected `2` spaces between cell content and edge, expected `0` spaces, remove `2` spaces
+ *   10:4: Unexpected `2` spaces between cell edge and content, expected `0` spaces, remove `2` spaces
+ *   10:12: Unexpected `2` spaces between cell content and edge, expected `0` spaces, remove `2` spaces
+ *   11:4: Unexpected `2` spaces between cell edge and content, expected `0` spaces, remove `2` spaces
+ *   11:12: Unexpected `3` spaces between cell content and edge, expected between `0` (unaligned) and `1` (aligned) space, remove between `2` and `3` spaces
  *
  * @example
- *   {"name": "ok-padded.md", "config": "consistent", "gfm": true}
+ *   {"gfm": true, "name": "consistent-padded-ok.md"}
  *
- *   | A     | B     |
- *   | ----- | ----- |
- *   | Alpha | Bravo |
- *
- *   | C       | D     |
- *   | ------- | ----- |
- *   | Charlie | Delta |
+ *   | Planet |
+ *   | - |
  *
  * @example
- *   {"name": "not-ok-padded.md", "label": "input", "config": "consistent", "gfm": true}
+ *   {"gfm": true, "label": "input", "name": "consistent-padded-nok.md"}
  *
- *   | A     | B     |
- *   | ----- | ----- |
- *   | Alpha | Bravo |
+ *   | Planet|
+ *   | - |
+ * @example
+ *   {"gfm": true, "label": "output", "name": "consistent-padded-nok.md"}
  *
- *   | C      |     D |
- *   | :----- | ----: |
- *   |Charlie | Delta |
+ *   1:9: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
  *
  * @example
- *   {"name": "not-ok-padded.md", "label": "output", "config": "consistent", "gfm": true}
+ *   {"gfm": true, "name": "consistent-compact-ok.md"}
  *
- *   7:2: Cell should be padded
- *
- * @example
- *   {"name": "ok-compact.md", "config": "consistent", "gfm": true}
- *
- *   |A    |B    |
- *   |-----|-----|
- *   |Alpha|Bravo|
- *
- *   |C      |D    |
- *   |-------|-----|
- *   |Charlie|Delta|
+ *   |Planet|
+ *   |-|
  *
  * @example
- *   {"name": "not-ok-compact.md", "label": "input", "config": "consistent", "gfm": true}
+ *   {"gfm": true, "label": "input", "name": "consistent-compact-nok.md"}
  *
- *   |A    |B    |
- *   |-----|-----|
- *   |Alpha|Bravo|
+ *   |Planet |
+ *   |-|
+ * @example
+ *   {"gfm": true, "label": "output", "name": "consistent-compact-nok.md"}
  *
- *   |C      |     D|
- *   |:------|-----:|
- *   |Charlie|Delta |
+ *   1:9: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
  *
  * @example
- *   {"name": "not-ok-compact.md", "label": "output", "config": "consistent", "gfm": true}
+ *   {"gfm": true, "name": "empty.md"}
  *
- *   7:15: Cell should be compact
- *
- * @example
- *   {"name": "not-ok.md", "label": "output", "config": "💩", "positionless": true, "gfm": true}
- *
- *   1:1: Incorrect table cell padding style `💩`, expected `'padded'`, `'compact'`, or `'consistent'`
+ *   | | Satellites |
+ *   | - | - |
+ *   | Mercury | |
  *
  * @example
- *   {"name": "empty.md", "label": "input", "config": "padded", "gfm": true}
+ *   {"gfm": true, "name": "missing-cells.md"}
  *
- *   <!-- Empty cells are OK, but those surrounding them may not be. -->
- *
- *   |        | Alpha | Bravo|
- *   | ------ | ----- | ---: |
- *   | Charlie|       |  Echo|
- *
- * @example
- *   {"name": "empty.md", "label": "output", "config": "padded", "gfm": true}
- *
- *   3:25: Cell should be padded
- *   5:10: Cell should be padded
- *   5:25: Cell should be padded
+ *   | Planet | Symbol | Satellites |
+ *   | - | - | - |
+ *   | Mercury |
+ *   | Venus | ♀ |
+ *   | Earth | 🜨 and ♁ | 1 |
+ *   | Mars | ♂ | 2 | 19 412 |
  *
  * @example
- *   {"name": "missing-body.md", "config": "padded", "gfm": true}
+ *   {"config": "padded", "gfm": true, "label": "input", "name": "missing-fences.md"}
  *
- *   <!-- Missing cells are fine as well. -->
+ *   ␠Planet|Symbol|Satellites
+ *   ------:|:-----|----------
+ *   Mercury|☿     |0
  *
- *   | Alpha | Bravo   | Charlie |
- *   | ----- | ------- | ------- |
- *   | Delta |
- *   | Echo  | Foxtrot |
+ *   Planet|Symbol
+ *   -----:|------
+ *   ␠Venus|♀
+ * @example
+ *   {"config": "padded", "gfm": true, "label": "output", "name": "missing-fences.md"}
+ *
+ *   1:8: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *   1:9: Unexpected `0` spaces between cell edge and content, expected `1` space, add `1` space
+ *   1:15: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *   1:16: Unexpected `0` spaces between cell edge and content, expected `1` space, add `1` space
+ *   2:8: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *   2:9: Unexpected `0` spaces between cell edge and content, expected `1` space, add `1` space
+ *   2:15: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *   2:16: Unexpected `0` spaces between cell edge and content, expected `1` space, add `1` space
+ *   3:8: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *   3:9: Unexpected `0` spaces between cell edge and content, expected `1` space, add `1` space
+ *   3:16: Unexpected `0` spaces between cell edge and content, expected `1` space, add `1` space
+ *   5:7: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *   5:8: Unexpected `0` spaces between cell edge and content, expected `1` space, add `1` space
+ *   6:7: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *   6:8: Unexpected `0` spaces between cell edge and content, expected `1` space, add `1` space
+ *   7:7: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *   7:8: Unexpected `0` spaces between cell edge and content, expected `1` space, add `1` space
+ *
+ * @example
+ *   {"config": "compact", "gfm": true, "label": "input", "name": "missing-fences.md"}
+ *
+ *   Planet | Symbol | Satellites
+ *   -: | - | -
+ *   Mercury | ☿ | 0
+ *
+ *   Planet | Symbol
+ *   -----: | ------
+ *   ␠Venus | ♀
+ * @example
+ *   {"config": "compact", "gfm": true, "label": "output", "name": "missing-fences.md"}
+ *
+ *   1:8: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   1:10: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   1:17: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   1:19: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   2:4: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   2:6: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   2:10: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   3:9: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   3:11: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   3:15: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   5:8: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   5:10: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   6:8: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   6:10: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   7:8: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   7:10: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *
+ * @example
+ *   {"config": "compact", "gfm": true, "label": "input", "name": "trailing-spaces.md"}
+ *
+ *   Planet | Symbol␠
+ *   -: | -␠
+ *   Mercury | ☿␠␠
+ *
+ *   | Planet | Symbol |␠
+ *   | ------ | ------ |␠
+ *   | Venus  | ♀      |␠␠
+ * @example
+ *   {"config": "compact", "gfm": true, "label": "output", "name": "trailing-spaces.md"}
+ *
+ *   1:8: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   1:10: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   2:4: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   2:6: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   3:9: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   3:11: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   5:3: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   5:10: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   5:12: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   5:19: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   6:3: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   6:10: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   6:12: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   6:19: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   7:3: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   7:10: Unexpected `2` spaces between cell content and edge, expected between `0` (unaligned) and `1` (aligned) space, remove between `1` and `2` spaces
+ *   7:12: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   7:19: Unexpected `6` spaces between cell content and edge, expected between `0` (unaligned) and `5` (aligned) spaces, remove between `1` and `6` spaces
+ *
+ * @example
+ *   {"config": "compact", "gfm": true, "label": "input", "name": "nothing.md"}
+ *
+ *   |   |   |   |
+ *   | - | - | - |
+ *   |   |   |   |
+ * @example
+ *   {"config": "compact", "gfm": true, "label": "output", "name": "nothing.md"}
+ *
+ *   1:5: Unexpected `3` spaces between cell edge and content, expected between `0` (unaligned) and `1` (aligned) space, remove between `2` and `3` spaces
+ *   1:9: Unexpected `3` spaces between cell edge and content, expected between `0` (unaligned) and `1` (aligned) space, remove between `2` and `3` spaces
+ *   1:13: Unexpected `3` spaces between cell edge and content, expected between `0` (unaligned) and `1` (aligned) space, remove between `2` and `3` spaces
+ *   2:3: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   2:5: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   2:7: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   2:9: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   2:11: Unexpected `1` space between cell edge and content, expected `0` spaces, remove `1` space
+ *   2:13: Unexpected `1` space between cell content and edge, expected `0` spaces, remove `1` space
+ *   3:5: Unexpected `3` spaces between cell edge and content, expected between `0` (unaligned) and `1` (aligned) space, remove between `2` and `3` spaces
+ *   3:9: Unexpected `3` spaces between cell edge and content, expected between `0` (unaligned) and `1` (aligned) space, remove between `2` and `3` spaces
+ *   3:13: Unexpected `3` spaces between cell edge and content, expected between `0` (unaligned) and `1` (aligned) space, remove between `2` and `3` spaces
+ *
+ * @example
+ *   {"config": "padded", "gfm": true, "label": "input", "name": "nothing.md"}
+ *
+ *   ||||
+ *   |-|-|-|
+ *   ||||
+ * @example
+ *   {"config": "padded", "gfm": true, "label": "output", "name": "nothing.md"}
+ *
+ *   1:2: Unexpected `0` spaces between cell edge and content, expected between `1` (unaligned) and `3` (aligned) spaces, add between `3` and `1` space
+ *   1:3: Unexpected `0` spaces between cell edge and content, expected between `1` (unaligned) and `3` (aligned) spaces, add between `3` and `1` space
+ *   1:4: Unexpected `0` spaces between cell edge and content, expected between `1` (unaligned) and `3` (aligned) spaces, add between `3` and `1` space
+ *   2:2: Unexpected `0` spaces between cell edge and content, expected `1` space, add `1` space
+ *   2:3: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *   2:4: Unexpected `0` spaces between cell edge and content, expected `1` space, add `1` space
+ *   2:5: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *   2:6: Unexpected `0` spaces between cell edge and content, expected `1` space, add `1` space
+ *   2:7: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *   3:2: Unexpected `0` spaces between cell edge and content, expected between `1` (unaligned) and `3` (aligned) spaces, add between `3` and `1` space
+ *   3:3: Unexpected `0` spaces between cell edge and content, expected between `1` (unaligned) and `3` (aligned) spaces, add between `3` and `1` space
+ *   3:4: Unexpected `0` spaces between cell edge and content, expected between `1` (unaligned) and `3` (aligned) spaces, add between `3` and `1` space
+ *
+ * @example
+ *   {"config": "padded", "gfm": true, "label": "input", "name": "more-weirdness.md"}
+ *
+ *   Mercury
+ *   |-
+ *
+ *   Venus
+ *   -|
+ * @example
+ *   {"config": "padded", "gfm": true, "label": "output", "name": "more-weirdness.md"}
+ *
+ *   2:2: Unexpected `0` spaces between cell edge and content, expected `1` space, add `1` space
+ *   5:2: Unexpected `0` spaces between cell content and edge, expected between `1` (unaligned) and `5` (aligned) spaces, add between `5` and `1` space
+ *
+ * @example
+ *   {"config": "padded", "gfm": true, "label": "input", "name": "containers.md"}
+ *
+ *   > | Mercury|
+ *   > | - |
+ *
+ *   * | Venus|
+ *     | - |
+ *
+ *   > * > | Earth|
+ *   >   > | - |
+ * @example
+ *   {"config": "padded", "gfm": true, "label": "output", "name": "containers.md"}
+ *
+ *   1:12: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *   4:10: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *   7:14: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *
+ * @example
+ *   {"config": "padded", "gfm": true, "label": "input", "name": "windows.md"}
+ *
+ *   | Mercury|␍␊| --- |␍␊| None |
+ * @example
+ *   {"config": "padded", "gfm": true, "label": "output", "name": "windows.md"}
+ *
+ *   1:10: Unexpected `0` spaces between cell content and edge, expected `1` space, add `1` space
+ *
+ * @example
+ *   {"config": "🌍", "gfm": true, "label": "output", "name": "not-ok.md", "positionless": true}
+ *
+ *   1:1: Unexpected value `🌍` for `options`, expected `'compact'`, `'padded'`, or `'consistent'`
  */
-const remarkLintTableCellPadding = lintRule(
+const remarkLintTableCellPadding = lintRule$1(
   {
     origin: 'remark-lint:table-cell-padding',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-table-cell-padding#readme'
   },
-  (tree, file, option = 'consistent') => {
-    if (
-      option !== 'padded' &&
-      option !== 'compact' &&
-      option !== 'consistent'
-    ) {
+  function (tree, file, options) {
+    const value = String(file);
+    let expected;
+    let cause;
+    if (options === null || options === undefined || options === 'consistent') ; else if (options === 'compact' || options === 'padded') {
+      expected = options;
+    } else {
       file.fail(
-        'Incorrect table cell padding style `' +
-          option +
-          "`, expected `'padded'`, `'compact'`, or `'consistent'`"
+        'Unexpected value `' +
+          options +
+          "` for `options`, expected `'compact'`, `'padded'`, or `'consistent'`"
       );
     }
-    visit$1(tree, 'table', (node) => {
-      const rows = node.children;
-      const align = node.align || [];
-      const sizes = [];
-      const entries = [];
-      let index = -1;
-      while (++index < align.length) {
-        const alignment = align[index];
-        sizes[index] = alignment === 'center' ? 3 : alignment ? 2 : 1;
+    visitParents(tree, function (table, parents) {
+      if (phrasing(table)) {
+        return SKIP
       }
-      index = -1;
-      while (++index < rows.length) {
-        const row = rows[index];
-        let column = -1;
-        while (++column < row.children.length) {
-          const cell = row.children[column];
-          const cellStart = pointStart(cell).offset;
-          const cellEnd = pointEnd(cell).offset;
-          const contentStart = pointStart(cell.children[0]).offset;
-          const contentEnd = pointEnd(
-            cell.children[cell.children.length - 1]
-          ).offset;
-          if (
-            typeof cellStart !== 'number' ||
-            typeof cellEnd !== 'number' ||
-            typeof contentStart !== 'number' ||
-            typeof contentEnd !== 'number'
-          ) {
-            continue
-          }
-          entries.push({
-            node: cell,
-            start: contentStart - cellStart - 1,
-            end:
-              cellEnd -
-              contentEnd -
-              (column === row.children.length - 1 ? 1 : 0),
-            column
-          });
-          sizes[column] = Math.max(
-            sizes[column] || 0,
-            contentEnd - contentStart
-          );
+      if (table.type !== 'table') return
+      const entries = inferTable([...parents, table]);
+      const sizes = [];
+      for (const entry of entries) {
+        if (
+          entry.size &&
+          (sizes[entry.column] === undefined ||
+            entry.size.middle > sizes[entry.column])
+        ) {
+          sizes[entry.column] = entry.size.middle;
         }
       }
-      const style =
-        option === 'consistent'
-          ? entries[0] && (!entries[0].start || !entries[0].end)
-            ? 0
-            : 1
-          : option === 'padded'
-          ? 1
-          : 0;
-      index = -1;
-      while (++index < entries.length) {
-        checkSide('start', entries[index], style, sizes);
-        checkSide('end', entries[index], style, sizes);
+      if (!expected) {
+        for (const info of entries) {
+          if (
+            info.size &&
+            info.size.middle &&
+            info.size.middle === sizes[info.column]
+          ) {
+            const node = info.ancestors.at(-1);
+            expected = info.size.left ? 'padded' : 'compact';
+            cause = new VFileMessage(
+              "Cell padding style `'" +
+                expected +
+                "'` first defined for `'consistent'` here",
+              {
+                ancestors: info.ancestors,
+                place: node.position,
+                ruleId: 'table-cell-padding',
+                source: 'remark-lint'
+              }
+            );
+          }
+        }
       }
-      return SKIP$1
+      if (!expected) return
+      for (const info of entries) {
+        checkSide('left', info, sizes);
+        checkSide('right', info, sizes);
+      }
+      return SKIP
     });
-    function checkSide(side, entry, style, sizes) {
-      const cell = entry.node;
-      const column = entry.column;
-      const spacing = entry[side];
-      if (spacing === undefined || spacing === style) {
+    function checkSide(side, info, sizes) {
+      if (!info.size) {
         return
       }
-      let reason = 'Cell should be ';
-      if (style === 0) {
-        if (size$1(cell) < sizes[column]) {
-          return
-        }
-        reason += 'compact';
-      } else {
-        reason += 'padded';
-        if (spacing > style) {
-          if (size$1(cell) < sizes[column]) {
-            return
+      const actual = info.size[side];
+      if (actual === undefined) {
+        return
+      }
+      const alignSpaces = sizes[info.column] - info.size.middle;
+      const min = expected === 'compact' ? 0 : 1;
+      let max = min;
+      if (info.align === 'center') {
+        max += Math.ceil(alignSpaces / 2);
+      } else if (info.align === 'right' ? side === 'left' : side === 'right') {
+        max += alignSpaces;
+      }
+      if (info.size.middle === 0) {
+        if (side === 'right') return
+        max = Math.max(max, sizes[info.column] + 2 * min);
+      }
+      if (actual < min || actual > max) {
+        const differenceMin = min - actual;
+        const differenceMinAbsolute = Math.abs(differenceMin);
+        const differenceMax = max - actual;
+        const differenceMaxAbsolute = Math.abs(differenceMax);
+        file.message(
+          'Unexpected `' +
+            actual +
+            '` ' +
+            pluralize('space', actual) +
+            ' between cell ' +
+            (side === 'left' ? 'edge' : 'content') +
+            ' and ' +
+            (side === 'left' ? 'content' : 'edge') +
+            ', expected ' +
+            (min === max ? '' : 'between `' + min + '` (unaligned) and ') +
+            '`' +
+            max +
+            '` ' +
+            (min === max ? '' : '(aligned) ') +
+            pluralize('space', max) +
+            ', ' +
+            (differenceMin < 0 ? 'remove' : 'add') +
+            (differenceMin === differenceMax
+              ? ''
+              : ' between `' + differenceMaxAbsolute + '` and') +
+            ' `' +
+            differenceMinAbsolute +
+            '` ' +
+            pluralize('space', differenceMinAbsolute),
+          {
+            ancestors: info.ancestors,
+            cause,
+            place: side === 'left' ? info.size.leftPoint : info.size.rightPoint
           }
-          reason += ' with 1 space, not ' + spacing;
+        );
+      }
+    }
+    function inferTable(ancestors) {
+      const node = ancestors.at(-1);
+      ok$1(node.type === 'table');
+      const align = node.align || [];
+      const result = [];
+      let rowIndex = -1;
+      while (++rowIndex < node.children.length) {
+        const row = node.children[rowIndex];
+        let column = -1;
+        while (++column < row.children.length) {
+          const node = row.children[column];
+          result.push({
+            align: align[column],
+            ancestors: [...ancestors, row, node],
+            column,
+            size: inferSize(
+              pointStart(node),
+              pointEnd(node),
+              column === row.children.length - 1
+            )
+          });
+        }
+        if (rowIndex === 0) {
+          const alignRow = inferAlignRow(ancestors, align);
+          if (alignRow) result.push(...alignRow);
         }
       }
-      file.message(
-        reason,
-        side === 'start'
-          ? pointStart(cell.children[0])
-          : pointEnd(cell.children[cell.children.length - 1])
-      );
+      return result
+    }
+    function inferAlignRow(ancestors, align) {
+      const node = ancestors.at(-1);
+      ok$1(node.type === 'table');
+      const headEnd = pointEnd(node.children[0]);
+      if (!headEnd || typeof headEnd.offset !== 'number') return
+      let index = headEnd.offset;
+      if (value.charCodeAt(index) === 13 ) index++;
+      if (value.charCodeAt(index) !== 10 ) return
+      index++;
+      const result = [];
+      const line = headEnd.line + 1;
+      let code = value.charCodeAt(index);
+      while (
+        code === 9  ||
+        code === 32  ||
+        code === 62
+      ) {
+        index++;
+        code = value.charCodeAt(index);
+      }
+      if (
+        code !== 45  &&
+        code !== 58  &&
+        code !== 124
+      ) {
+        return
+      }
+      let lineEndOffset = value.indexOf('\n', index);
+      if (lineEndOffset === -1) lineEndOffset = value.length;
+      if (value.charCodeAt(lineEndOffset - 1) === 13 ) lineEndOffset--;
+      let column = 0;
+      let cellStart = index;
+      let cellEnd = value.indexOf('|', index + (code === 124 ? 1 : 0));
+      if (cellEnd === -1 || cellEnd > lineEndOffset) {
+        cellEnd = lineEndOffset;
+      }
+      while (cellStart !== cellEnd) {
+        let nextCellEnd = value.indexOf('|', cellEnd + 1);
+        if (nextCellEnd === -1 || nextCellEnd > lineEndOffset) {
+          nextCellEnd = lineEndOffset;
+        }
+        if (nextCellEnd === lineEndOffset) {
+          let maybeEnd = lineEndOffset;
+          let code = value.charCodeAt(maybeEnd - 1);
+          while (code === 9  || code === 32 ) {
+            maybeEnd--;
+            code = value.charCodeAt(maybeEnd - 1);
+          }
+          if (cellEnd + 1 === maybeEnd) {
+            cellEnd = lineEndOffset;
+          }
+        }
+        result.push({
+          align: align[column],
+          ancestors,
+          column,
+          size: inferSize(
+            {
+              line,
+              column: cellStart - index + 1,
+              offset: cellStart
+            },
+            {line, column: cellEnd - index + 1, offset: cellEnd},
+            cellEnd === lineEndOffset
+          )
+        });
+        cellStart = cellEnd;
+        cellEnd = nextCellEnd;
+        column++;
+      }
+      return result
+    }
+    function inferSize(start, end, tailCell) {
+      if (
+        end &&
+        start &&
+        typeof end.offset === 'number' &&
+        typeof start.offset === 'number'
+      ) {
+        let leftIndex = start.offset;
+        let left;
+        let right;
+        if (value.charCodeAt(leftIndex) === 124 ) {
+          left = 0;
+          leftIndex++;
+          while (value.charCodeAt(leftIndex) === 32) {
+            left++;
+            leftIndex++;
+          }
+        }
+        let rightIndex = end.offset;
+        if (tailCell) {
+          while (value.charCodeAt(rightIndex - 1) === 32) {
+            rightIndex--;
+          }
+          if (
+            rightIndex > leftIndex &&
+            value.charCodeAt(rightIndex - 1) === 124
+          ) {
+            rightIndex--;
+          }
+          else {
+            rightIndex = end.offset;
+          }
+        }
+        const rightEdgeIndex = rightIndex;
+        if (value.charCodeAt(rightIndex) === 124 ) {
+          right = 0;
+          while (
+            rightIndex - 1 > leftIndex &&
+            value.charCodeAt(rightIndex - 1) === 32
+          ) {
+            right++;
+            rightIndex--;
+          }
+        }
+        return {
+          left,
+          leftPoint: {
+            line: start.line,
+            column: start.column + (leftIndex - start.offset),
+            offset: leftIndex
+          },
+          middle: rightIndex - leftIndex,
+          right,
+          rightPoint: {
+            line: end.line,
+            column: end.column - (end.offset - rightEdgeIndex),
+            offset: rightEdgeIndex
+          }
+        }
+      }
     }
   }
 );
-var remarkLintTableCellPadding$1 = remarkLintTableCellPadding;
-function size$1(node) {
-  const head = pointStart(node.children[0]).offset;
-  const tail = pointEnd(node.children[node.children.length - 1]).offset;
-  return typeof head === 'number' && typeof tail === 'number' ? tail - head : 0
-}
 
 /**
+ * remark-lint rule to warn when GFM table rows have no initial or
+ * final cell delimiter.
+ *
+ * ## What is this?
+ *
+ * This package checks that table rows have initial and final delimiters.
+ * Tables are a GFM feature enabled with [`remark-gfm`][github-remark-gfm].
+ *
  * ## When should I use this?
  *
- * You can use this package to check that tables have initial and final
- * delimiters.
- * Tables are a GFM feature enabled with
- * [`remark-gfm`](https://github.com/remarkjs/remark-gfm).
+ * You can use this package to check that tables are consistent.
  *
  * ## API
  *
+ * ### `unified().use(remarkLintTablePipes)`
+ *
+ * Warn when GFM table rows have no initial or final cell delimiter.
+ *
+ * ###### Parameters
+ *
  * There are no options.
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
  *
  * ## Recommendation
  *
- * While tables don’t require initial or final delimiters (pipes before the
- * first and after the last cells in a row), it arguably does look weird.
+ * While tables don’t require initial or final delimiters (the pipes before the
+ * first and after the last cells in a row),
+ * it arguably does look weird without.
  *
  * ## Fix
  *
- * [`remark-gfm`](https://github.com/remarkjs/remark-gfm)
- * formats all tables with initial and final delimiters.
+ * [`remark-stringify`][github-remark-stringify] with
+ * [`remark-gfm`][github-remark-gfm] formats all tables with initial and final
+ * delimiters.
+ *
+ * [api-remark-lint-table-pipes]: #unifieduseremarklinttablepipes
+ * [github-remark-gfm]: https://github.com/remarkjs/remark-gfm
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module table-pipes
- * @summary
- *   remark-lint rule to warn when tables are missing initial and final
- *   delimiters.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
+ *
  * @example
  *   {"name": "ok.md", "gfm": true}
  *
- *   | A     | B     |
- *   | ----- | ----- |
- *   | Alpha | Bravo |
+ *   Small table:
+ *
+ *   | Planet | Mean anomaly (°) |
+ *   | :- | -: |
+ *   | Mercury | 174 796 |
  *
  * @example
  *   {"name": "not-ok.md", "label": "input", "gfm": true}
  *
- *   A     | B
- *   ----- | -----
- *   Alpha | Bravo
- *
+ *   Planet | Mean anomaly (°)
+ *   :- | -:
+ *   Mercury | 174 796
  * @example
  *   {"name": "not-ok.md", "label": "output", "gfm": true}
  *
- *   1:1: Missing initial pipe in table fence
- *   1:10: Missing final pipe in table fence
- *   3:1: Missing initial pipe in table fence
- *   3:14: Missing final pipe in table fence
+ *   1:1: Unexpected missing closing pipe in row, expected `|`
+ *   1:26: Unexpected missing opening pipe in row, expected `|`
+ *   2:1: Unexpected missing closing pipe in row, expected `|`
+ *   2:8: Unexpected missing opening pipe in row, expected `|`
+ *   3:1: Unexpected missing closing pipe in row, expected `|`
+ *   3:18: Unexpected missing opening pipe in row, expected `|`
+ *
+ * @example
+ *   {"gfm": true, "label": "input", "name": "missing-cells.md"}
+ *
+ *   Planet | Symbol | Satellites
+ *   :- | - | -
+ *   Mercury
+ *   Venus | ♀
+ *   Earth | ♁ | 1
+ *   Mars | ♂ | 2 | 19 412
+ * @example
+ *   {"gfm": true, "label": "output", "name": "missing-cells.md"}
+ *
+ *   1:1: Unexpected missing closing pipe in row, expected `|`
+ *   1:29: Unexpected missing opening pipe in row, expected `|`
+ *   2:1: Unexpected missing closing pipe in row, expected `|`
+ *   2:11: Unexpected missing opening pipe in row, expected `|`
+ *   3:1: Unexpected missing closing pipe in row, expected `|`
+ *   3:8: Unexpected missing opening pipe in row, expected `|`
+ *   4:1: Unexpected missing closing pipe in row, expected `|`
+ *   4:10: Unexpected missing opening pipe in row, expected `|`
+ *   5:1: Unexpected missing closing pipe in row, expected `|`
+ *   5:14: Unexpected missing opening pipe in row, expected `|`
+ *   6:1: Unexpected missing closing pipe in row, expected `|`
+ *   6:22: Unexpected missing opening pipe in row, expected `|`
+ *
+ * @example
+ *   {"gfm": true, "label": "input", "name": "trailing-spaces.md"}
+ *
+ *   ␠␠Planet␠␠
+ *   ␠-:␠
+ *
+ *   ␠␠| Planet |␠␠
+ *   ␠| -: |␠
+ * @example
+ *   {"gfm": true, "label": "output", "name": "trailing-spaces.md"}
+ *
+ *   1:3: Unexpected missing closing pipe in row, expected `|`
+ *   1:11: Unexpected missing opening pipe in row, expected `|`
+ *   2:2: Unexpected missing closing pipe in row, expected `|`
+ *   2:5: Unexpected missing opening pipe in row, expected `|`
+ *
+ * @example
+ *   {"gfm": true, "label": "input", "name": "windows.md"}
+ *
+ *   Mercury␍␊:-␍␊None
+ * @example
+ *   {"gfm": true, "label": "output", "name": "windows.md"}
+ *
+ *   1:1: Unexpected missing closing pipe in row, expected `|`
+ *   1:8: Unexpected missing opening pipe in row, expected `|`
+ *   2:1: Unexpected missing closing pipe in row, expected `|`
+ *   2:3: Unexpected missing opening pipe in row, expected `|`
+ *   3:1: Unexpected missing closing pipe in row, expected `|`
+ *   3:5: Unexpected missing opening pipe in row, expected `|`
  */
-const reasonStart = 'Missing initial pipe in table fence';
-const reasonEnd = 'Missing final pipe in table fence';
-const remarkLintTablePipes = lintRule(
+const remarkLintTablePipes = lintRule$1(
   {
     origin: 'remark-lint:table-pipes',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-table-pipes#readme'
   },
-  (tree, file) => {
+  function (tree, file) {
     const value = String(file);
-    visit$1(tree, 'table', (node) => {
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (node.type !== 'table') return
       let index = -1;
       while (++index < node.children.length) {
         const row = node.children[index];
         const start = pointStart(row);
         const end = pointEnd(row);
-        if (
-          typeof start.offset === 'number' &&
-          value.charCodeAt(start.offset) !== 124
-        ) {
-          file.message(reasonStart, start);
+        if (start && typeof start.offset === 'number') {
+          checkStart(start.offset, start, [...parents, node, row]);
         }
-        if (
-          typeof end.offset === 'number' &&
-          value.charCodeAt(end.offset - 1) !== 124
-        ) {
-          file.message(reasonEnd, end);
+        if (end && typeof end.offset === 'number') {
+          checkEnd(end.offset, end, [...parents, node, row]);
+          if (index === 0) {
+            let index = end.offset;
+            if (value.charCodeAt(index) === 13 ) index++;
+            if (value.charCodeAt(index) !== 10 ) continue
+            index++;
+            const lineStart = index;
+            let code = value.charCodeAt(index);
+            while (
+              code === 9  ||
+              code === 32  ||
+              code === 62
+            ) {
+              index++;
+              code = value.charCodeAt(index);
+            }
+            checkStart(
+              index,
+              {
+                line: end.line + 1,
+                column: index - lineStart + 1,
+                offset: index
+              },
+              [...parents, node]
+            );
+            index = value.indexOf('\n', index);
+            if (index === -1) index = value.length;
+            if (value.charCodeAt(index - 1) === 13 ) index--;
+            checkEnd(
+              index,
+              {
+                line: end.line + 1,
+                column: index - lineStart + 1,
+                offset: index
+              },
+              [...parents, node]
+            );
+          }
         }
       }
+      return SKIP
     });
+    function checkStart(index, place, ancestors) {
+      let code = value.charCodeAt(index);
+      while (code === 9  || code === 32 ) {
+        code = value.charCodeAt(++index);
+      }
+      if (code !== 124 ) {
+        file.message('Unexpected missing closing pipe in row, expected `|`', {
+          ancestors,
+          place
+        });
+      }
+    }
+    function checkEnd(index, place, ancestors) {
+      let code = value.charCodeAt(index - 1);
+      while (code === 9  || code === 32 ) {
+        index--;
+        code = value.charCodeAt(index - 1);
+      }
+      if (code !== 124 ) {
+        file.message('Unexpected missing opening pipe in row, expected `|`', {
+          ancestors,
+          place
+        });
+      }
+    }
   }
 );
-var remarkLintTablePipes$1 = remarkLintTablePipes;
 
 /**
+ * remark-lint rule to warn when unordered list markers are inconsistent.
+ *
+ * ## What is this?
+ *
+ * This package checks unordered list markers.
+ *
  * ## When should I use this?
  *
- * You can use this package to check that unordered list markers (bullets)
- * are consistent.
+ * You can use this package to check unordered lists.
  *
  * ## API
  *
- * The following options (default: `'consistent'`) are accepted:
+ * ### `unified().use(remarkLintUnorderedListMarkerStyle[, options])`
  *
- * *   `'*'`
- *     — prefer asterisks
- * *   `'+'`
- *     — prefer plusses
- * *   `'-'`
- *     — prefer dashes
- * *   `'consistent'`
- *     — detect the first used style and warn when further markers differ
+ * Warn when unordered list markers are inconsistent.
+ *
+ * ###### Parameters
+ *
+ * * `options` ([`Options`][api-options], default: `'consistent'`)
+ *   — preferred style or whether to detect the first style and warn for
+ *   further differences
+ *
+ * ###### Returns
+ *
+ * Transform ([`Transformer` from `unified`][github-unified-transformer]).
+ *
+ * ### `Options`
+ *
+ * Configuration (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Options = Style | 'consistent'
+ * ```
+ *
+ * ### `Style`
+ *
+ * Style (TypeScript type).
+ *
+ * ###### Type
+ *
+ * ```ts
+ * type Style = '*' | '+' | '-'
+ * ```
  *
  * ## Recommendation
  *
@@ -20838,119 +22969,140 @@ var remarkLintTablePipes$1 = remarkLintTablePipes;
  *
  * ## Fix
  *
- * [`remark-stringify`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify)
- * formats ordered lists with asterisks by default.
- * Pass
- * [`bullet: '+'` or `bullet: '-'`](https://github.com/remarkjs/remark/tree/main/packages/remark-stringify#optionsbullet)
- * to always use plusses or dashes.
+ * [`remark-stringify`][github-remark-stringify] formats unordered lists with
+ * asterisks by default.
+ * Pass `bullet: '+'` or `bullet: '-'` to use a different marker.
+ *
+ * [api-options]: #options
+ * [api-style]: #style
+ * [api-remark-lint-unordered-list-marker-style]: #unifieduseremarklintunorderedlistmarkerstyle-options
+ * [github-remark-stringify]: https://github.com/remarkjs/remark/tree/main/packages/remark-stringify
+ * [github-unified-transformer]: https://github.com/unifiedjs/unified#transformer
  *
  * @module unordered-list-marker-style
- * @summary
- *   remark-lint rule to warn when unordered list markers are inconsistent.
  * @author Titus Wormer
  * @copyright 2015 Titus Wormer
  * @license MIT
  * @example
  *   {"name": "ok.md"}
  *
- *   By default (`'consistent'`), if the file uses only one marker,
- *   that’s OK.
+ *   * Mercury
  *
- *   * Foo
- *   * Bar
- *   * Baz
+ *   1. Venus
  *
- *   Ordered lists are not affected.
- *
- *   1. Foo
- *   2. Bar
- *   3. Baz
+ *   * Earth
  *
  * @example
  *   {"name": "ok.md", "config": "*"}
  *
- *   * Foo
+ *   * Mercury
  *
  * @example
  *   {"name": "ok.md", "config": "-"}
  *
- *   - Foo
+ *   - Mercury
  *
  * @example
  *   {"name": "ok.md", "config": "+"}
  *
- *   + Foo
+ *   + Mercury
  *
  * @example
  *   {"name": "not-ok.md", "label": "input"}
  *
- *   * Foo
- *   - Bar
- *   + Baz
+ *   * Mercury
  *
+ *   - Venus
+ *
+ *   + Earth
  * @example
  *   {"name": "not-ok.md", "label": "output"}
  *
- *   2:1-2:6: Marker style should be `*`
- *   3:1-3:6: Marker style should be `*`
+ *   3:1: Unexpected unordered list marker `-`, expected `*`
+ *   5:1: Unexpected unordered list marker `+`, expected `*`
  *
  * @example
- *   {"name": "not-ok.md", "label": "output", "config": "💩", "positionless": true}
+ *   {"name": "not-ok.md", "label": "output", "config": "🌍", "positionless": true}
  *
- *   1:1: Incorrect unordered list item marker style `💩`: use either `'-'`, `'*'`, or `'+'`
+ *   1:1: Unexpected value `🌍` for `options`, expected `'*'`, `'+'`, `'-'`, or `'consistent'`
  */
-const markers = new Set(['-', '*', '+']);
-const remarkLintUnorderedListMarkerStyle = lintRule(
+const remarkLintUnorderedListMarkerStyle = lintRule$1(
   {
     origin: 'remark-lint:unordered-list-marker-style',
     url: 'https://github.com/remarkjs/remark-lint/tree/main/packages/remark-lint-unordered-list-marker-style#readme'
   },
-  (tree, file, option = 'consistent') => {
+  function (tree, file, options) {
     const value = String(file);
-    if (option !== 'consistent' && !markers.has(option)) {
+    let expected;
+    let cause;
+    if (options === null || options === undefined || options === 'consistent') ; else if (options === '*' || options === '+' || options === '-') {
+      expected = options;
+    } else {
       file.fail(
-        'Incorrect unordered list item marker style `' +
-          option +
-          "`: use either `'-'`, `'*'`, or `'+'`"
+        'Unexpected value `' +
+          options +
+          "` for `options`, expected `'*'`, `'+'`, `'-'`, or `'consistent'`"
       );
     }
-    visit$1(tree, 'list', (node) => {
-      if (node.ordered) return
-      let index = -1;
-      while (++index < node.children.length) {
-        const child = node.children[index];
-        if (!generated(child)) {
-          const marker =  (
-            value
-              .slice(
-                pointStart(child).offset,
-                pointStart(child.children[0]).offset
-              )
-              .replace(/\[[x ]?]\s*$/i, '')
-              .replace(/\s/g, '')
+    visitParents(tree, function (node, parents) {
+      if (phrasing(node)) {
+        return SKIP
+      }
+      if (node.type !== 'listItem') return
+      const parent = parents.at(-1);
+      if (!parent || parent.type !== 'list' || parent.ordered) return
+      const place = pointStart(node);
+      if (!place || typeof place.offset !== 'number') return
+      const code = value.charCodeAt(place.offset);
+      const actual =
+        code === 42
+          ? '*'
+          : code === 43
+            ? '+'
+            : code === 45
+              ? '-'
+              :
+                undefined;
+      if (!actual) return
+      if (expected) {
+        if (actual !== expected) {
+          file.message(
+            'Unexpected unordered list marker `' +
+              actual +
+              '`, expected `' +
+              expected +
+              '`',
+            {ancestors: [...parents, node], cause, place}
           );
-          if (option === 'consistent') {
-            option = marker;
-          } else if (marker !== option) {
-            file.message('Marker style should be `' + option + '`', child);
-          }
         }
+      } else {
+        expected = actual;
+        cause = new VFileMessage(
+          'Unordered list marker style `' +
+            expected +
+            "` first defined for `'consistent'` here",
+          {
+            ancestors: [...parents, node],
+            place,
+            ruleId: 'unordered-list-marker-style',
+            source: 'remark-lint'
+          }
+        );
       }
     });
   }
 );
-var remarkLintUnorderedListMarkerStyle$1 = remarkLintUnorderedListMarkerStyle;
 
 const plugins = [
   remarkGfm,
-  remarkPresetLintRecommended$1,
-  [remarkLintBlockquoteIndentation$1, 2],
-  [remarkLintCheckboxCharacterStyle$1, { checked: "x", unchecked: " " }],
-  remarkLintCheckboxContentIndent$1,
-  [remarkLintCodeBlockStyle$1, "fenced"],
-  remarkLintDefinitionSpacing$1,
+  remarkPresetLintRecommended,
+  [remarkLintBlockquoteIndentation, 2],
+  [remarkLintCheckboxCharacterStyle, { checked: "x", unchecked: " " }],
+  remarkLintCheckboxContentIndent,
+  [remarkLintCodeBlockStyle, "fenced"],
+  remarkLintDefinitionSpacing,
   [
-    remarkLintFencedCodeFlag$1,
+    remarkLintFencedCodeFlag,
     {
       flags: [
         "bash",
@@ -20972,22 +23124,21 @@ const plugins = [
       ],
     },
   ],
-  [remarkLintFencedCodeMarker$1, "`"],
-  [remarkLintFileExtension$1, "md"],
-  remarkLintFinalDefinition$1,
-  [remarkLintFirstHeadingLevel$1, 1],
-  [remarkLintHeadingStyle$1, "atx"],
-  [remarkLintListItemIndent$1, "space"],
-  remarkLintMaximumLineLength$1,
-  remarkLintNoConsecutiveBlankLines$1,
-  remarkLintNoFileNameArticles$1,
-  remarkLintNoFileNameConsecutiveDashes$1,
-  remarkLintNofileNameOuterDashes$1,
-  remarkLintNoHeadingIndent$1,
-  remarkLintNoMultipleToplevelHeadings$1,
-  remarkLintNoShellDollars$1,
-  remarkLintNoTableIndentation$1,
-  remarkLintNoTabs$1,
+  [remarkLintFencedCodeMarker, "`"],
+  [remarkLintFileExtension, "md"],
+  remarkLintFinalDefinition,
+  [remarkLintFirstHeadingLevel, 1],
+  [remarkLintHeadingStyle, "atx"],
+  [remarkLintMaximumLineLength, 120],
+  remarkLintNoConsecutiveBlankLines,
+  remarkLintNoFileNameArticles,
+  remarkLintNoFileNameConsecutiveDashes,
+  remarkLintNofileNameOuterDashes,
+  remarkLintNoHeadingIndent,
+  remarkLintNoMultipleToplevelHeadings,
+  remarkLintNoShellDollars,
+  remarkLintNoTableIndentation,
+  remarkLintNoTabs,
   remarkLintNoTrailingSpaces$1,
   remarkLintNodejsLinks,
   remarkLintNodejsYamlComments,
@@ -21007,114 +23158,56 @@ const plugins = [
       { no: "[Nn]ote that", yes: "<nothing>" },
       { yes: "RFC" },
       { no: "[Rr][Ff][Cc]\\d+", yes: "RFC <number>" },
+      { yes: "TypeScript" },
       { yes: "Unix" },
       { yes: "Valgrind" },
       { yes: "V8" },
     ],
   ],
-  remarkLintRuleStyle$1,
-  [remarkLintStrongMarker$1, "*"],
-  [remarkLintTableCellPadding$1, "padded"],
-  remarkLintTablePipes$1,
-  [remarkLintUnorderedListMarkerStyle$1, "*"],
+  remarkLintRuleStyle,
+  [remarkLintStrongMarker, "*"],
+  [remarkLintTableCellPadding, "padded"],
+  remarkLintTablePipes,
+  [remarkLintUnorderedListMarkerStyle, "*"],
 ];
 const settings = {
   emphasis: "_",
-  listItemIndent: 1,
   tightDefinitions: true,
 };
 const remarkPresetLintNode = { plugins, settings };
 
-function toVFile(description) {
-  if (typeof description === 'string' || description instanceof URL$1) {
-    description = {path: description};
-  } else if (buffer$1(description)) {
-    description = {path: String(description)};
+function read(description, options, callback) {
+  const file = toVFile(description);
+  {
+    return new Promise(executor)
   }
-  return looksLikeAVFile(description)
-    ? description
-    :
-      new VFile(description || undefined)
-}
-function readSync(description, options) {
-  const file = toVFile(description);
-  file.value = fs.readFileSync(path$1.resolve(file.cwd, file.path), options);
-  return file
-}
-function writeSync(description, options) {
-  const file = toVFile(description);
-  fs.writeFileSync(path$1.resolve(file.cwd, file.path), file.value || '', options);
-  return file
-}
-const read =
-  (
-    function (description, options, callback) {
-      const file = toVFile(description);
-      if (!callback && typeof options === 'function') {
-        callback = options;
-        options = null;
-      }
-      if (!callback) {
-        return new Promise(executor)
-      }
-      executor(resolve, callback);
-      function resolve(result) {
-        callback(null, result);
-      }
-      function executor(resolve, reject) {
-        let fp;
-        try {
-          fp = path$1.resolve(file.cwd, file.path);
-        } catch (error) {
-          const exception =  (error);
-          return reject(exception)
-        }
-        fs.readFile(fp, options, done);
-        function done(error, result) {
-          if (error) {
-            reject(error);
-          } else {
-            file.value = result;
-            resolve(file);
-          }
-        }
+  function executor(resolve, reject) {
+    let fp;
+    try {
+      fp = path$1.resolve(file.cwd, file.path);
+    } catch (error) {
+      const exception =  (error);
+      return reject(exception)
+    }
+    fs$1.readFile(fp, options, done);
+    function done(error, result) {
+      if (error) {
+        reject(error);
+      } else {
+        file.value = result;
+        resolve(file);
       }
     }
-  );
-const write =
-  (
-    function (description, options, callback) {
-      const file = toVFile(description);
-      if (!callback && typeof options === 'function') {
-        callback = options;
-        options = undefined;
-      }
-      if (!callback) {
-        return new Promise(executor)
-      }
-      executor(resolve, callback);
-      function resolve(result) {
-        callback(null, result);
-      }
-      function executor(resolve, reject) {
-        let fp;
-        try {
-          fp = path$1.resolve(file.cwd, file.path);
-        } catch (error) {
-          const exception =  (error);
-          return reject(exception, null)
-        }
-        fs.writeFile(fp, file.value || '', options || null, done);
-        function done(error) {
-          if (error) {
-            reject(error, null);
-          } else {
-            resolve(file);
-          }
-        }
-      }
-    }
-  );
+  }
+}
+function toVFile(description) {
+  if (typeof description === 'string' || description instanceof URL) {
+    description = {path: description};
+  } else if (isUint8Array(description)) {
+    description = {path: new TextDecoder().decode(description)};
+  }
+  return looksLikeAVFile(description) ? description : new VFile(description)
+}
 function looksLikeAVFile(value) {
   return Boolean(
     value &&
@@ -21123,10 +23216,14 @@ function looksLikeAVFile(value) {
       'messages' in value
   )
 }
-toVFile.readSync = readSync;
-toVFile.writeSync = writeSync;
-toVFile.read = read;
-toVFile.write = write;
+function isUint8Array(value) {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      'byteLength' in value &&
+      'byteOffset' in value
+  )
+}
 
 function ansiRegex({onlyFirst = false} = {}) {
 	const pattern = [
@@ -21451,65 +23548,102 @@ var eastasianwidth = {exports: {}};
 var eastasianwidthExports = eastasianwidth.exports;
 var eastAsianWidth = getDefaultExportFromCjs(eastasianwidthExports);
 
-var emojiRegex = function () {
-  return /\uD83C\uDFF4\uDB40\uDC67\uDB40\uDC62(?:\uDB40\uDC77\uDB40\uDC6C\uDB40\uDC73|\uDB40\uDC73\uDB40\uDC63\uDB40\uDC74|\uDB40\uDC65\uDB40\uDC6E\uDB40\uDC67)\uDB40\uDC7F|(?:\uD83E\uDDD1\uD83C\uDFFF\u200D\u2764\uFE0F\u200D(?:\uD83D\uDC8B\u200D)?\uD83E\uDDD1|\uD83D\uDC69\uD83C\uDFFF\u200D\uD83E\uDD1D\u200D(?:\uD83D[\uDC68\uDC69]))(?:\uD83C[\uDFFB-\uDFFE])|(?:\uD83E\uDDD1\uD83C\uDFFE\u200D\u2764\uFE0F\u200D(?:\uD83D\uDC8B\u200D)?\uD83E\uDDD1|\uD83D\uDC69\uD83C\uDFFE\u200D\uD83E\uDD1D\u200D(?:\uD83D[\uDC68\uDC69]))(?:\uD83C[\uDFFB-\uDFFD\uDFFF])|(?:\uD83E\uDDD1\uD83C\uDFFD\u200D\u2764\uFE0F\u200D(?:\uD83D\uDC8B\u200D)?\uD83E\uDDD1|\uD83D\uDC69\uD83C\uDFFD\u200D\uD83E\uDD1D\u200D(?:\uD83D[\uDC68\uDC69]))(?:\uD83C[\uDFFB\uDFFC\uDFFE\uDFFF])|(?:\uD83E\uDDD1\uD83C\uDFFC\u200D\u2764\uFE0F\u200D(?:\uD83D\uDC8B\u200D)?\uD83E\uDDD1|\uD83D\uDC69\uD83C\uDFFC\u200D\uD83E\uDD1D\u200D(?:\uD83D[\uDC68\uDC69]))(?:\uD83C[\uDFFB\uDFFD-\uDFFF])|(?:\uD83E\uDDD1\uD83C\uDFFB\u200D\u2764\uFE0F\u200D(?:\uD83D\uDC8B\u200D)?\uD83E\uDDD1|\uD83D\uDC69\uD83C\uDFFB\u200D\uD83E\uDD1D\u200D(?:\uD83D[\uDC68\uDC69]))(?:\uD83C[\uDFFC-\uDFFF])|\uD83D\uDC68(?:\uD83C\uDFFB(?:\u200D(?:\u2764\uFE0F\u200D(?:\uD83D\uDC8B\u200D\uD83D\uDC68(?:\uD83C[\uDFFB-\uDFFF])|\uD83D\uDC68(?:\uD83C[\uDFFB-\uDFFF]))|\uD83E\uDD1D\u200D\uD83D\uDC68(?:\uD83C[\uDFFC-\uDFFF])|[\u2695\u2696\u2708]\uFE0F|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD]))?|(?:\uD83C[\uDFFC-\uDFFF])\u200D\u2764\uFE0F\u200D(?:\uD83D\uDC8B\u200D\uD83D\uDC68(?:\uD83C[\uDFFB-\uDFFF])|\uD83D\uDC68(?:\uD83C[\uDFFB-\uDFFF]))|\u200D(?:\u2764\uFE0F\u200D(?:\uD83D\uDC8B\u200D)?\uD83D\uDC68|(?:\uD83D[\uDC68\uDC69])\u200D(?:\uD83D\uDC66\u200D\uD83D\uDC66|\uD83D\uDC67\u200D(?:\uD83D[\uDC66\uDC67]))|\uD83D\uDC66\u200D\uD83D\uDC66|\uD83D\uDC67\u200D(?:\uD83D[\uDC66\uDC67])|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFF\u200D(?:\uD83E\uDD1D\u200D\uD83D\uDC68(?:\uD83C[\uDFFB-\uDFFE])|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFE\u200D(?:\uD83E\uDD1D\u200D\uD83D\uDC68(?:\uD83C[\uDFFB-\uDFFD\uDFFF])|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFD\u200D(?:\uD83E\uDD1D\u200D\uD83D\uDC68(?:\uD83C[\uDFFB\uDFFC\uDFFE\uDFFF])|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFC\u200D(?:\uD83E\uDD1D\u200D\uD83D\uDC68(?:\uD83C[\uDFFB\uDFFD-\uDFFF])|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|(?:\uD83C\uDFFF\u200D[\u2695\u2696\u2708]|\uD83C\uDFFE\u200D[\u2695\u2696\u2708]|\uD83C\uDFFD\u200D[\u2695\u2696\u2708]|\uD83C\uDFFC\u200D[\u2695\u2696\u2708]|\u200D[\u2695\u2696\u2708])\uFE0F|\u200D(?:(?:\uD83D[\uDC68\uDC69])\u200D(?:\uD83D[\uDC66\uDC67])|\uD83D[\uDC66\uDC67])|\uD83C\uDFFF|\uD83C\uDFFE|\uD83C\uDFFD|\uD83C\uDFFC)?|(?:\uD83D\uDC69(?:\uD83C\uDFFB\u200D\u2764\uFE0F\u200D(?:\uD83D\uDC8B\u200D(?:\uD83D[\uDC68\uDC69])|\uD83D[\uDC68\uDC69])|(?:\uD83C[\uDFFC-\uDFFF])\u200D\u2764\uFE0F\u200D(?:\uD83D\uDC8B\u200D(?:\uD83D[\uDC68\uDC69])|\uD83D[\uDC68\uDC69]))|\uD83E\uDDD1(?:\uD83C[\uDFFB-\uDFFF])\u200D\uD83E\uDD1D\u200D\uD83E\uDDD1)(?:\uD83C[\uDFFB-\uDFFF])|\uD83D\uDC69\u200D\uD83D\uDC69\u200D(?:\uD83D\uDC66\u200D\uD83D\uDC66|\uD83D\uDC67\u200D(?:\uD83D[\uDC66\uDC67]))|\uD83D\uDC69(?:\u200D(?:\u2764\uFE0F\u200D(?:\uD83D\uDC8B\u200D(?:\uD83D[\uDC68\uDC69])|\uD83D[\uDC68\uDC69])|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFF\u200D(?:\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFE\u200D(?:\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFD\u200D(?:\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFC\u200D(?:\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFB\u200D(?:\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD]))|\uD83E\uDDD1(?:\u200D(?:\uD83E\uDD1D\u200D\uD83E\uDDD1|\uD83C[\uDF3E\uDF73\uDF7C\uDF84\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFF\u200D(?:\uD83C[\uDF3E\uDF73\uDF7C\uDF84\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFE\u200D(?:\uD83C[\uDF3E\uDF73\uDF7C\uDF84\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFD\u200D(?:\uD83C[\uDF3E\uDF73\uDF7C\uDF84\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFC\u200D(?:\uD83C[\uDF3E\uDF73\uDF7C\uDF84\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD])|\uD83C\uDFFB\u200D(?:\uD83C[\uDF3E\uDF73\uDF7C\uDF84\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E[\uDDAF-\uDDB3\uDDBC\uDDBD]))|\uD83D\uDC69\u200D\uD83D\uDC66\u200D\uD83D\uDC66|\uD83D\uDC69\u200D\uD83D\uDC69\u200D(?:\uD83D[\uDC66\uDC67])|\uD83D\uDC69\u200D\uD83D\uDC67\u200D(?:\uD83D[\uDC66\uDC67])|(?:\uD83D\uDC41\uFE0F\u200D\uD83D\uDDE8|\uD83E\uDDD1(?:\uD83C\uDFFF\u200D[\u2695\u2696\u2708]|\uD83C\uDFFE\u200D[\u2695\u2696\u2708]|\uD83C\uDFFD\u200D[\u2695\u2696\u2708]|\uD83C\uDFFC\u200D[\u2695\u2696\u2708]|\uD83C\uDFFB\u200D[\u2695\u2696\u2708]|\u200D[\u2695\u2696\u2708])|\uD83D\uDC69(?:\uD83C\uDFFF\u200D[\u2695\u2696\u2708]|\uD83C\uDFFE\u200D[\u2695\u2696\u2708]|\uD83C\uDFFD\u200D[\u2695\u2696\u2708]|\uD83C\uDFFC\u200D[\u2695\u2696\u2708]|\uD83C\uDFFB\u200D[\u2695\u2696\u2708]|\u200D[\u2695\u2696\u2708])|\uD83D\uDE36\u200D\uD83C\uDF2B|\uD83C\uDFF3\uFE0F\u200D\u26A7|\uD83D\uDC3B\u200D\u2744|(?:(?:\uD83C[\uDFC3\uDFC4\uDFCA]|\uD83D[\uDC6E\uDC70\uDC71\uDC73\uDC77\uDC81\uDC82\uDC86\uDC87\uDE45-\uDE47\uDE4B\uDE4D\uDE4E\uDEA3\uDEB4-\uDEB6]|\uD83E[\uDD26\uDD35\uDD37-\uDD39\uDD3D\uDD3E\uDDB8\uDDB9\uDDCD-\uDDCF\uDDD4\uDDD6-\uDDDD])(?:\uD83C[\uDFFB-\uDFFF])|\uD83D\uDC6F|\uD83E[\uDD3C\uDDDE\uDDDF])\u200D[\u2640\u2642]|(?:\u26F9|\uD83C[\uDFCB\uDFCC]|\uD83D\uDD75)(?:\uFE0F|\uD83C[\uDFFB-\uDFFF])\u200D[\u2640\u2642]|\uD83C\uDFF4\u200D\u2620|(?:\uD83C[\uDFC3\uDFC4\uDFCA]|\uD83D[\uDC6E\uDC70\uDC71\uDC73\uDC77\uDC81\uDC82\uDC86\uDC87\uDE45-\uDE47\uDE4B\uDE4D\uDE4E\uDEA3\uDEB4-\uDEB6]|\uD83E[\uDD26\uDD35\uDD37-\uDD39\uDD3D\uDD3E\uDDB8\uDDB9\uDDCD-\uDDCF\uDDD4\uDDD6-\uDDDD])\u200D[\u2640\u2642]|[\xA9\xAE\u203C\u2049\u2122\u2139\u2194-\u2199\u21A9\u21AA\u2328\u23CF\u23ED-\u23EF\u23F1\u23F2\u23F8-\u23FA\u24C2\u25AA\u25AB\u25B6\u25C0\u25FB\u25FC\u2600-\u2604\u260E\u2611\u2618\u2620\u2622\u2623\u2626\u262A\u262E\u262F\u2638-\u263A\u2640\u2642\u265F\u2660\u2663\u2665\u2666\u2668\u267B\u267E\u2692\u2694-\u2697\u2699\u269B\u269C\u26A0\u26A7\u26B0\u26B1\u26C8\u26CF\u26D1\u26D3\u26E9\u26F0\u26F1\u26F4\u26F7\u26F8\u2702\u2708\u2709\u270F\u2712\u2714\u2716\u271D\u2721\u2733\u2734\u2744\u2747\u2763\u27A1\u2934\u2935\u2B05-\u2B07\u3030\u303D\u3297\u3299]|\uD83C[\uDD70\uDD71\uDD7E\uDD7F\uDE02\uDE37\uDF21\uDF24-\uDF2C\uDF36\uDF7D\uDF96\uDF97\uDF99-\uDF9B\uDF9E\uDF9F\uDFCD\uDFCE\uDFD4-\uDFDF\uDFF5\uDFF7]|\uD83D[\uDC3F\uDCFD\uDD49\uDD4A\uDD6F\uDD70\uDD73\uDD76-\uDD79\uDD87\uDD8A-\uDD8D\uDDA5\uDDA8\uDDB1\uDDB2\uDDBC\uDDC2-\uDDC4\uDDD1-\uDDD3\uDDDC-\uDDDE\uDDE1\uDDE3\uDDE8\uDDEF\uDDF3\uDDFA\uDECB\uDECD-\uDECF\uDEE0-\uDEE5\uDEE9\uDEF0\uDEF3])\uFE0F|\uD83C\uDFF3\uFE0F\u200D\uD83C\uDF08|\uD83D\uDC69\u200D\uD83D\uDC67|\uD83D\uDC69\u200D\uD83D\uDC66|\uD83D\uDE35\u200D\uD83D\uDCAB|\uD83D\uDE2E\u200D\uD83D\uDCA8|\uD83D\uDC15\u200D\uD83E\uDDBA|\uD83E\uDDD1(?:\uD83C\uDFFF|\uD83C\uDFFE|\uD83C\uDFFD|\uD83C\uDFFC|\uD83C\uDFFB)?|\uD83D\uDC69(?:\uD83C\uDFFF|\uD83C\uDFFE|\uD83C\uDFFD|\uD83C\uDFFC|\uD83C\uDFFB)?|\uD83C\uDDFD\uD83C\uDDF0|\uD83C\uDDF6\uD83C\uDDE6|\uD83C\uDDF4\uD83C\uDDF2|\uD83D\uDC08\u200D\u2B1B|\u2764\uFE0F\u200D(?:\uD83D\uDD25|\uD83E\uDE79)|\uD83D\uDC41\uFE0F|\uD83C\uDFF3\uFE0F|\uD83C\uDDFF(?:\uD83C[\uDDE6\uDDF2\uDDFC])|\uD83C\uDDFE(?:\uD83C[\uDDEA\uDDF9])|\uD83C\uDDFC(?:\uD83C[\uDDEB\uDDF8])|\uD83C\uDDFB(?:\uD83C[\uDDE6\uDDE8\uDDEA\uDDEC\uDDEE\uDDF3\uDDFA])|\uD83C\uDDFA(?:\uD83C[\uDDE6\uDDEC\uDDF2\uDDF3\uDDF8\uDDFE\uDDFF])|\uD83C\uDDF9(?:\uD83C[\uDDE6\uDDE8\uDDE9\uDDEB-\uDDED\uDDEF-\uDDF4\uDDF7\uDDF9\uDDFB\uDDFC\uDDFF])|\uD83C\uDDF8(?:\uD83C[\uDDE6-\uDDEA\uDDEC-\uDDF4\uDDF7-\uDDF9\uDDFB\uDDFD-\uDDFF])|\uD83C\uDDF7(?:\uD83C[\uDDEA\uDDF4\uDDF8\uDDFA\uDDFC])|\uD83C\uDDF5(?:\uD83C[\uDDE6\uDDEA-\uDDED\uDDF0-\uDDF3\uDDF7-\uDDF9\uDDFC\uDDFE])|\uD83C\uDDF3(?:\uD83C[\uDDE6\uDDE8\uDDEA-\uDDEC\uDDEE\uDDF1\uDDF4\uDDF5\uDDF7\uDDFA\uDDFF])|\uD83C\uDDF2(?:\uD83C[\uDDE6\uDDE8-\uDDED\uDDF0-\uDDFF])|\uD83C\uDDF1(?:\uD83C[\uDDE6-\uDDE8\uDDEE\uDDF0\uDDF7-\uDDFB\uDDFE])|\uD83C\uDDF0(?:\uD83C[\uDDEA\uDDEC-\uDDEE\uDDF2\uDDF3\uDDF5\uDDF7\uDDFC\uDDFE\uDDFF])|\uD83C\uDDEF(?:\uD83C[\uDDEA\uDDF2\uDDF4\uDDF5])|\uD83C\uDDEE(?:\uD83C[\uDDE8-\uDDEA\uDDF1-\uDDF4\uDDF6-\uDDF9])|\uD83C\uDDED(?:\uD83C[\uDDF0\uDDF2\uDDF3\uDDF7\uDDF9\uDDFA])|\uD83C\uDDEC(?:\uD83C[\uDDE6\uDDE7\uDDE9-\uDDEE\uDDF1-\uDDF3\uDDF5-\uDDFA\uDDFC\uDDFE])|\uD83C\uDDEB(?:\uD83C[\uDDEE-\uDDF0\uDDF2\uDDF4\uDDF7])|\uD83C\uDDEA(?:\uD83C[\uDDE6\uDDE8\uDDEA\uDDEC\uDDED\uDDF7-\uDDFA])|\uD83C\uDDE9(?:\uD83C[\uDDEA\uDDEC\uDDEF\uDDF0\uDDF2\uDDF4\uDDFF])|\uD83C\uDDE8(?:\uD83C[\uDDE6\uDDE8\uDDE9\uDDEB-\uDDEE\uDDF0-\uDDF5\uDDF7\uDDFA-\uDDFF])|\uD83C\uDDE7(?:\uD83C[\uDDE6\uDDE7\uDDE9-\uDDEF\uDDF1-\uDDF4\uDDF6-\uDDF9\uDDFB\uDDFC\uDDFE\uDDFF])|\uD83C\uDDE6(?:\uD83C[\uDDE8-\uDDEC\uDDEE\uDDF1\uDDF2\uDDF4\uDDF6-\uDDFA\uDDFC\uDDFD\uDDFF])|[#\*0-9]\uFE0F\u20E3|\u2764\uFE0F|(?:\uD83C[\uDFC3\uDFC4\uDFCA]|\uD83D[\uDC6E\uDC70\uDC71\uDC73\uDC77\uDC81\uDC82\uDC86\uDC87\uDE45-\uDE47\uDE4B\uDE4D\uDE4E\uDEA3\uDEB4-\uDEB6]|\uD83E[\uDD26\uDD35\uDD37-\uDD39\uDD3D\uDD3E\uDDB8\uDDB9\uDDCD-\uDDCF\uDDD4\uDDD6-\uDDDD])(?:\uD83C[\uDFFB-\uDFFF])|(?:\u26F9|\uD83C[\uDFCB\uDFCC]|\uD83D\uDD75)(?:\uFE0F|\uD83C[\uDFFB-\uDFFF])|\uD83C\uDFF4|(?:[\u270A\u270B]|\uD83C[\uDF85\uDFC2\uDFC7]|\uD83D[\uDC42\uDC43\uDC46-\uDC50\uDC66\uDC67\uDC6B-\uDC6D\uDC72\uDC74-\uDC76\uDC78\uDC7C\uDC83\uDC85\uDC8F\uDC91\uDCAA\uDD7A\uDD95\uDD96\uDE4C\uDE4F\uDEC0\uDECC]|\uD83E[\uDD0C\uDD0F\uDD18-\uDD1C\uDD1E\uDD1F\uDD30-\uDD34\uDD36\uDD77\uDDB5\uDDB6\uDDBB\uDDD2\uDDD3\uDDD5])(?:\uD83C[\uDFFB-\uDFFF])|(?:[\u261D\u270C\u270D]|\uD83D[\uDD74\uDD90])(?:\uFE0F|\uD83C[\uDFFB-\uDFFF])|[\u270A\u270B]|\uD83C[\uDF85\uDFC2\uDFC7]|\uD83D[\uDC08\uDC15\uDC3B\uDC42\uDC43\uDC46-\uDC50\uDC66\uDC67\uDC6B-\uDC6D\uDC72\uDC74-\uDC76\uDC78\uDC7C\uDC83\uDC85\uDC8F\uDC91\uDCAA\uDD7A\uDD95\uDD96\uDE2E\uDE35\uDE36\uDE4C\uDE4F\uDEC0\uDECC]|\uD83E[\uDD0C\uDD0F\uDD18-\uDD1C\uDD1E\uDD1F\uDD30-\uDD34\uDD36\uDD77\uDDB5\uDDB6\uDDBB\uDDD2\uDDD3\uDDD5]|\uD83C[\uDFC3\uDFC4\uDFCA]|\uD83D[\uDC6E\uDC70\uDC71\uDC73\uDC77\uDC81\uDC82\uDC86\uDC87\uDE45-\uDE47\uDE4B\uDE4D\uDE4E\uDEA3\uDEB4-\uDEB6]|\uD83E[\uDD26\uDD35\uDD37-\uDD39\uDD3D\uDD3E\uDDB8\uDDB9\uDDCD-\uDDCF\uDDD4\uDDD6-\uDDDD]|\uD83D\uDC6F|\uD83E[\uDD3C\uDDDE\uDDDF]|[\u231A\u231B\u23E9-\u23EC\u23F0\u23F3\u25FD\u25FE\u2614\u2615\u2648-\u2653\u267F\u2693\u26A1\u26AA\u26AB\u26BD\u26BE\u26C4\u26C5\u26CE\u26D4\u26EA\u26F2\u26F3\u26F5\u26FA\u26FD\u2705\u2728\u274C\u274E\u2753-\u2755\u2757\u2795-\u2797\u27B0\u27BF\u2B1B\u2B1C\u2B50\u2B55]|\uD83C[\uDC04\uDCCF\uDD8E\uDD91-\uDD9A\uDE01\uDE1A\uDE2F\uDE32-\uDE36\uDE38-\uDE3A\uDE50\uDE51\uDF00-\uDF20\uDF2D-\uDF35\uDF37-\uDF7C\uDF7E-\uDF84\uDF86-\uDF93\uDFA0-\uDFC1\uDFC5\uDFC6\uDFC8\uDFC9\uDFCF-\uDFD3\uDFE0-\uDFF0\uDFF8-\uDFFF]|\uD83D[\uDC00-\uDC07\uDC09-\uDC14\uDC16-\uDC3A\uDC3C-\uDC3E\uDC40\uDC44\uDC45\uDC51-\uDC65\uDC6A\uDC79-\uDC7B\uDC7D-\uDC80\uDC84\uDC88-\uDC8E\uDC90\uDC92-\uDCA9\uDCAB-\uDCFC\uDCFF-\uDD3D\uDD4B-\uDD4E\uDD50-\uDD67\uDDA4\uDDFB-\uDE2D\uDE2F-\uDE34\uDE37-\uDE44\uDE48-\uDE4A\uDE80-\uDEA2\uDEA4-\uDEB3\uDEB7-\uDEBF\uDEC1-\uDEC5\uDED0-\uDED2\uDED5-\uDED7\uDEEB\uDEEC\uDEF4-\uDEFC\uDFE0-\uDFEB]|\uD83E[\uDD0D\uDD0E\uDD10-\uDD17\uDD1D\uDD20-\uDD25\uDD27-\uDD2F\uDD3A\uDD3F-\uDD45\uDD47-\uDD76\uDD78\uDD7A-\uDDB4\uDDB7\uDDBA\uDDBC-\uDDCB\uDDD0\uDDE0-\uDDFF\uDE70-\uDE74\uDE78-\uDE7A\uDE80-\uDE86\uDE90-\uDEA8\uDEB0-\uDEB6\uDEC0-\uDEC2\uDED0-\uDED6]|(?:[\u231A\u231B\u23E9-\u23EC\u23F0\u23F3\u25FD\u25FE\u2614\u2615\u2648-\u2653\u267F\u2693\u26A1\u26AA\u26AB\u26BD\u26BE\u26C4\u26C5\u26CE\u26D4\u26EA\u26F2\u26F3\u26F5\u26FA\u26FD\u2705\u270A\u270B\u2728\u274C\u274E\u2753-\u2755\u2757\u2795-\u2797\u27B0\u27BF\u2B1B\u2B1C\u2B50\u2B55]|\uD83C[\uDC04\uDCCF\uDD8E\uDD91-\uDD9A\uDDE6-\uDDFF\uDE01\uDE1A\uDE2F\uDE32-\uDE36\uDE38-\uDE3A\uDE50\uDE51\uDF00-\uDF20\uDF2D-\uDF35\uDF37-\uDF7C\uDF7E-\uDF93\uDFA0-\uDFCA\uDFCF-\uDFD3\uDFE0-\uDFF0\uDFF4\uDFF8-\uDFFF]|\uD83D[\uDC00-\uDC3E\uDC40\uDC42-\uDCFC\uDCFF-\uDD3D\uDD4B-\uDD4E\uDD50-\uDD67\uDD7A\uDD95\uDD96\uDDA4\uDDFB-\uDE4F\uDE80-\uDEC5\uDECC\uDED0-\uDED2\uDED5-\uDED7\uDEEB\uDEEC\uDEF4-\uDEFC\uDFE0-\uDFEB]|\uD83E[\uDD0C-\uDD3A\uDD3C-\uDD45\uDD47-\uDD78\uDD7A-\uDDCB\uDDCD-\uDDFF\uDE70-\uDE74\uDE78-\uDE7A\uDE80-\uDE86\uDE90-\uDEA8\uDEB0-\uDEB6\uDEC0-\uDEC2\uDED0-\uDED6])|(?:[#\*0-9\xA9\xAE\u203C\u2049\u2122\u2139\u2194-\u2199\u21A9\u21AA\u231A\u231B\u2328\u23CF\u23E9-\u23F3\u23F8-\u23FA\u24C2\u25AA\u25AB\u25B6\u25C0\u25FB-\u25FE\u2600-\u2604\u260E\u2611\u2614\u2615\u2618\u261D\u2620\u2622\u2623\u2626\u262A\u262E\u262F\u2638-\u263A\u2640\u2642\u2648-\u2653\u265F\u2660\u2663\u2665\u2666\u2668\u267B\u267E\u267F\u2692-\u2697\u2699\u269B\u269C\u26A0\u26A1\u26A7\u26AA\u26AB\u26B0\u26B1\u26BD\u26BE\u26C4\u26C5\u26C8\u26CE\u26CF\u26D1\u26D3\u26D4\u26E9\u26EA\u26F0-\u26F5\u26F7-\u26FA\u26FD\u2702\u2705\u2708-\u270D\u270F\u2712\u2714\u2716\u271D\u2721\u2728\u2733\u2734\u2744\u2747\u274C\u274E\u2753-\u2755\u2757\u2763\u2764\u2795-\u2797\u27A1\u27B0\u27BF\u2934\u2935\u2B05-\u2B07\u2B1B\u2B1C\u2B50\u2B55\u3030\u303D\u3297\u3299]|\uD83C[\uDC04\uDCCF\uDD70\uDD71\uDD7E\uDD7F\uDD8E\uDD91-\uDD9A\uDDE6-\uDDFF\uDE01\uDE02\uDE1A\uDE2F\uDE32-\uDE3A\uDE50\uDE51\uDF00-\uDF21\uDF24-\uDF93\uDF96\uDF97\uDF99-\uDF9B\uDF9E-\uDFF0\uDFF3-\uDFF5\uDFF7-\uDFFF]|\uD83D[\uDC00-\uDCFD\uDCFF-\uDD3D\uDD49-\uDD4E\uDD50-\uDD67\uDD6F\uDD70\uDD73-\uDD7A\uDD87\uDD8A-\uDD8D\uDD90\uDD95\uDD96\uDDA4\uDDA5\uDDA8\uDDB1\uDDB2\uDDBC\uDDC2-\uDDC4\uDDD1-\uDDD3\uDDDC-\uDDDE\uDDE1\uDDE3\uDDE8\uDDEF\uDDF3\uDDFA-\uDE4F\uDE80-\uDEC5\uDECB-\uDED2\uDED5-\uDED7\uDEE0-\uDEE5\uDEE9\uDEEB\uDEEC\uDEF0\uDEF3-\uDEFC\uDFE0-\uDFEB]|\uD83E[\uDD0C-\uDD3A\uDD3C-\uDD45\uDD47-\uDD78\uDD7A-\uDDCB\uDDCD-\uDDFF\uDE70-\uDE74\uDE78-\uDE7A\uDE80-\uDE86\uDE90-\uDEA8\uDEB0-\uDEB6\uDEC0-\uDEC2\uDED0-\uDED6])\uFE0F|(?:[\u261D\u26F9\u270A-\u270D]|\uD83C[\uDF85\uDFC2-\uDFC4\uDFC7\uDFCA-\uDFCC]|\uD83D[\uDC42\uDC43\uDC46-\uDC50\uDC66-\uDC78\uDC7C\uDC81-\uDC83\uDC85-\uDC87\uDC8F\uDC91\uDCAA\uDD74\uDD75\uDD7A\uDD90\uDD95\uDD96\uDE45-\uDE47\uDE4B-\uDE4F\uDEA3\uDEB4-\uDEB6\uDEC0\uDECC]|\uD83E[\uDD0C\uDD0F\uDD18-\uDD1F\uDD26\uDD30-\uDD39\uDD3C-\uDD3E\uDD77\uDDB5\uDDB6\uDDB8\uDDB9\uDDBB\uDDCD-\uDDCF\uDDD1-\uDDDD])/g;
+var emojiRegex = () => {
+	return /[#*0-9]\uFE0F?\u20E3|[\xA9\xAE\u203C\u2049\u2122\u2139\u2194-\u2199\u21A9\u21AA\u231A\u231B\u2328\u23CF\u23ED-\u23EF\u23F1\u23F2\u23F8-\u23FA\u24C2\u25AA\u25AB\u25B6\u25C0\u25FB\u25FC\u25FE\u2600-\u2604\u260E\u2611\u2614\u2615\u2618\u2620\u2622\u2623\u2626\u262A\u262E\u262F\u2638-\u263A\u2640\u2642\u2648-\u2653\u265F\u2660\u2663\u2665\u2666\u2668\u267B\u267E\u267F\u2692\u2694-\u2697\u2699\u269B\u269C\u26A0\u26A7\u26AA\u26B0\u26B1\u26BD\u26BE\u26C4\u26C8\u26CF\u26D1\u26E9\u26F0-\u26F5\u26F7\u26F8\u26FA\u2702\u2708\u2709\u270F\u2712\u2714\u2716\u271D\u2721\u2733\u2734\u2744\u2747\u2757\u2763\u27A1\u2934\u2935\u2B05-\u2B07\u2B1B\u2B1C\u2B55\u3030\u303D\u3297\u3299]\uFE0F?|[\u261D\u270C\u270D](?:\uFE0F|\uD83C[\uDFFB-\uDFFF])?|[\u270A\u270B](?:\uD83C[\uDFFB-\uDFFF])?|[\u23E9-\u23EC\u23F0\u23F3\u25FD\u2693\u26A1\u26AB\u26C5\u26CE\u26D4\u26EA\u26FD\u2705\u2728\u274C\u274E\u2753-\u2755\u2795-\u2797\u27B0\u27BF\u2B50]|\u26D3\uFE0F?(?:\u200D\uD83D\uDCA5)?|\u26F9(?:\uFE0F|\uD83C[\uDFFB-\uDFFF])?(?:\u200D[\u2640\u2642]\uFE0F?)?|\u2764\uFE0F?(?:\u200D(?:\uD83D\uDD25|\uD83E\uDE79))?|\uD83C(?:[\uDC04\uDD70\uDD71\uDD7E\uDD7F\uDE02\uDE37\uDF21\uDF24-\uDF2C\uDF36\uDF7D\uDF96\uDF97\uDF99-\uDF9B\uDF9E\uDF9F\uDFCD\uDFCE\uDFD4-\uDFDF\uDFF5\uDFF7]\uFE0F?|[\uDF85\uDFC2\uDFC7](?:\uD83C[\uDFFB-\uDFFF])?|[\uDFC4\uDFCA](?:\uD83C[\uDFFB-\uDFFF])?(?:\u200D[\u2640\u2642]\uFE0F?)?|[\uDFCB\uDFCC](?:\uFE0F|\uD83C[\uDFFB-\uDFFF])?(?:\u200D[\u2640\u2642]\uFE0F?)?|[\uDCCF\uDD8E\uDD91-\uDD9A\uDE01\uDE1A\uDE2F\uDE32-\uDE36\uDE38-\uDE3A\uDE50\uDE51\uDF00-\uDF20\uDF2D-\uDF35\uDF37-\uDF43\uDF45-\uDF4A\uDF4C-\uDF7C\uDF7E-\uDF84\uDF86-\uDF93\uDFA0-\uDFC1\uDFC5\uDFC6\uDFC8\uDFC9\uDFCF-\uDFD3\uDFE0-\uDFF0\uDFF8-\uDFFF]|\uDDE6\uD83C[\uDDE8-\uDDEC\uDDEE\uDDF1\uDDF2\uDDF4\uDDF6-\uDDFA\uDDFC\uDDFD\uDDFF]|\uDDE7\uD83C[\uDDE6\uDDE7\uDDE9-\uDDEF\uDDF1-\uDDF4\uDDF6-\uDDF9\uDDFB\uDDFC\uDDFE\uDDFF]|\uDDE8\uD83C[\uDDE6\uDDE8\uDDE9\uDDEB-\uDDEE\uDDF0-\uDDF5\uDDF7\uDDFA-\uDDFF]|\uDDE9\uD83C[\uDDEA\uDDEC\uDDEF\uDDF0\uDDF2\uDDF4\uDDFF]|\uDDEA\uD83C[\uDDE6\uDDE8\uDDEA\uDDEC\uDDED\uDDF7-\uDDFA]|\uDDEB\uD83C[\uDDEE-\uDDF0\uDDF2\uDDF4\uDDF7]|\uDDEC\uD83C[\uDDE6\uDDE7\uDDE9-\uDDEE\uDDF1-\uDDF3\uDDF5-\uDDFA\uDDFC\uDDFE]|\uDDED\uD83C[\uDDF0\uDDF2\uDDF3\uDDF7\uDDF9\uDDFA]|\uDDEE\uD83C[\uDDE8-\uDDEA\uDDF1-\uDDF4\uDDF6-\uDDF9]|\uDDEF\uD83C[\uDDEA\uDDF2\uDDF4\uDDF5]|\uDDF0\uD83C[\uDDEA\uDDEC-\uDDEE\uDDF2\uDDF3\uDDF5\uDDF7\uDDFC\uDDFE\uDDFF]|\uDDF1\uD83C[\uDDE6-\uDDE8\uDDEE\uDDF0\uDDF7-\uDDFB\uDDFE]|\uDDF2\uD83C[\uDDE6\uDDE8-\uDDED\uDDF0-\uDDFF]|\uDDF3\uD83C[\uDDE6\uDDE8\uDDEA-\uDDEC\uDDEE\uDDF1\uDDF4\uDDF5\uDDF7\uDDFA\uDDFF]|\uDDF4\uD83C\uDDF2|\uDDF5\uD83C[\uDDE6\uDDEA-\uDDED\uDDF0-\uDDF3\uDDF7-\uDDF9\uDDFC\uDDFE]|\uDDF6\uD83C\uDDE6|\uDDF7\uD83C[\uDDEA\uDDF4\uDDF8\uDDFA\uDDFC]|\uDDF8\uD83C[\uDDE6-\uDDEA\uDDEC-\uDDF4\uDDF7-\uDDF9\uDDFB\uDDFD-\uDDFF]|\uDDF9\uD83C[\uDDE6\uDDE8\uDDE9\uDDEB-\uDDED\uDDEF-\uDDF4\uDDF7\uDDF9\uDDFB\uDDFC\uDDFF]|\uDDFA\uD83C[\uDDE6\uDDEC\uDDF2\uDDF3\uDDF8\uDDFE\uDDFF]|\uDDFB\uD83C[\uDDE6\uDDE8\uDDEA\uDDEC\uDDEE\uDDF3\uDDFA]|\uDDFC\uD83C[\uDDEB\uDDF8]|\uDDFD\uD83C\uDDF0|\uDDFE\uD83C[\uDDEA\uDDF9]|\uDDFF\uD83C[\uDDE6\uDDF2\uDDFC]|\uDF44(?:\u200D\uD83D\uDFEB)?|\uDF4B(?:\u200D\uD83D\uDFE9)?|\uDFC3(?:\uD83C[\uDFFB-\uDFFF])?(?:\u200D(?:[\u2640\u2642]\uFE0F?(?:\u200D\u27A1\uFE0F?)?|\u27A1\uFE0F?))?|\uDFF3\uFE0F?(?:\u200D(?:\u26A7\uFE0F?|\uD83C\uDF08))?|\uDFF4(?:\u200D\u2620\uFE0F?|\uDB40\uDC67\uDB40\uDC62\uDB40(?:\uDC65\uDB40\uDC6E\uDB40\uDC67|\uDC73\uDB40\uDC63\uDB40\uDC74|\uDC77\uDB40\uDC6C\uDB40\uDC73)\uDB40\uDC7F)?)|\uD83D(?:[\uDC3F\uDCFD\uDD49\uDD4A\uDD6F\uDD70\uDD73\uDD76-\uDD79\uDD87\uDD8A-\uDD8D\uDDA5\uDDA8\uDDB1\uDDB2\uDDBC\uDDC2-\uDDC4\uDDD1-\uDDD3\uDDDC-\uDDDE\uDDE1\uDDE3\uDDE8\uDDEF\uDDF3\uDDFA\uDECB\uDECD-\uDECF\uDEE0-\uDEE5\uDEE9\uDEF0\uDEF3]\uFE0F?|[\uDC42\uDC43\uDC46-\uDC50\uDC66\uDC67\uDC6B-\uDC6D\uDC72\uDC74-\uDC76\uDC78\uDC7C\uDC83\uDC85\uDC8F\uDC91\uDCAA\uDD7A\uDD95\uDD96\uDE4C\uDE4F\uDEC0\uDECC](?:\uD83C[\uDFFB-\uDFFF])?|[\uDC6E\uDC70\uDC71\uDC73\uDC77\uDC81\uDC82\uDC86\uDC87\uDE45-\uDE47\uDE4B\uDE4D\uDE4E\uDEA3\uDEB4\uDEB5](?:\uD83C[\uDFFB-\uDFFF])?(?:\u200D[\u2640\u2642]\uFE0F?)?|[\uDD74\uDD90](?:\uFE0F|\uD83C[\uDFFB-\uDFFF])?|[\uDC00-\uDC07\uDC09-\uDC14\uDC16-\uDC25\uDC27-\uDC3A\uDC3C-\uDC3E\uDC40\uDC44\uDC45\uDC51-\uDC65\uDC6A\uDC79-\uDC7B\uDC7D-\uDC80\uDC84\uDC88-\uDC8E\uDC90\uDC92-\uDCA9\uDCAB-\uDCFC\uDCFF-\uDD3D\uDD4B-\uDD4E\uDD50-\uDD67\uDDA4\uDDFB-\uDE2D\uDE2F-\uDE34\uDE37-\uDE41\uDE43\uDE44\uDE48-\uDE4A\uDE80-\uDEA2\uDEA4-\uDEB3\uDEB7-\uDEBF\uDEC1-\uDEC5\uDED0-\uDED2\uDED5-\uDED7\uDEDC-\uDEDF\uDEEB\uDEEC\uDEF4-\uDEFC\uDFE0-\uDFEB\uDFF0]|\uDC08(?:\u200D\u2B1B)?|\uDC15(?:\u200D\uD83E\uDDBA)?|\uDC26(?:\u200D(?:\u2B1B|\uD83D\uDD25))?|\uDC3B(?:\u200D\u2744\uFE0F?)?|\uDC41\uFE0F?(?:\u200D\uD83D\uDDE8\uFE0F?)?|\uDC68(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D\uD83D(?:\uDC8B\u200D\uD83D)?\uDC68|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D(?:[\uDC68\uDC69]\u200D\uD83D(?:\uDC66(?:\u200D\uD83D\uDC66)?|\uDC67(?:\u200D\uD83D[\uDC66\uDC67])?)|[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uDC66(?:\u200D\uD83D\uDC66)?|\uDC67(?:\u200D\uD83D[\uDC66\uDC67])?)|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]))|\uD83C(?:\uDFFB(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D\uD83D(?:\uDC8B\u200D\uD83D)?\uDC68\uD83C[\uDFFB-\uDFFF]|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]|\uDD1D\u200D\uD83D\uDC68\uD83C[\uDFFC-\uDFFF])))?|\uDFFC(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D\uD83D(?:\uDC8B\u200D\uD83D)?\uDC68\uD83C[\uDFFB-\uDFFF]|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]|\uDD1D\u200D\uD83D\uDC68\uD83C[\uDFFB\uDFFD-\uDFFF])))?|\uDFFD(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D\uD83D(?:\uDC8B\u200D\uD83D)?\uDC68\uD83C[\uDFFB-\uDFFF]|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]|\uDD1D\u200D\uD83D\uDC68\uD83C[\uDFFB\uDFFC\uDFFE\uDFFF])))?|\uDFFE(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D\uD83D(?:\uDC8B\u200D\uD83D)?\uDC68\uD83C[\uDFFB-\uDFFF]|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]|\uDD1D\u200D\uD83D\uDC68\uD83C[\uDFFB-\uDFFD\uDFFF])))?|\uDFFF(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D\uD83D(?:\uDC8B\u200D\uD83D)?\uDC68\uD83C[\uDFFB-\uDFFF]|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]|\uDD1D\u200D\uD83D\uDC68\uD83C[\uDFFB-\uDFFE])))?))?|\uDC69(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D\uD83D(?:\uDC8B\u200D\uD83D)?[\uDC68\uDC69]|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D(?:[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uDC66(?:\u200D\uD83D\uDC66)?|\uDC67(?:\u200D\uD83D[\uDC66\uDC67])?|\uDC69\u200D\uD83D(?:\uDC66(?:\u200D\uD83D\uDC66)?|\uDC67(?:\u200D\uD83D[\uDC66\uDC67])?))|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]))|\uD83C(?:\uDFFB(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D\uD83D(?:[\uDC68\uDC69]|\uDC8B\u200D\uD83D[\uDC68\uDC69])\uD83C[\uDFFB-\uDFFF]|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]|\uDD1D\u200D\uD83D[\uDC68\uDC69]\uD83C[\uDFFC-\uDFFF])))?|\uDFFC(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D\uD83D(?:[\uDC68\uDC69]|\uDC8B\u200D\uD83D[\uDC68\uDC69])\uD83C[\uDFFB-\uDFFF]|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]|\uDD1D\u200D\uD83D[\uDC68\uDC69]\uD83C[\uDFFB\uDFFD-\uDFFF])))?|\uDFFD(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D\uD83D(?:[\uDC68\uDC69]|\uDC8B\u200D\uD83D[\uDC68\uDC69])\uD83C[\uDFFB-\uDFFF]|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]|\uDD1D\u200D\uD83D[\uDC68\uDC69]\uD83C[\uDFFB\uDFFC\uDFFE\uDFFF])))?|\uDFFE(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D\uD83D(?:[\uDC68\uDC69]|\uDC8B\u200D\uD83D[\uDC68\uDC69])\uD83C[\uDFFB-\uDFFF]|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]|\uDD1D\u200D\uD83D[\uDC68\uDC69]\uD83C[\uDFFB-\uDFFD\uDFFF])))?|\uDFFF(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D\uD83D(?:[\uDC68\uDC69]|\uDC8B\u200D\uD83D[\uDC68\uDC69])\uD83C[\uDFFB-\uDFFF]|\uD83C[\uDF3E\uDF73\uDF7C\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]|\uDD1D\u200D\uD83D[\uDC68\uDC69]\uD83C[\uDFFB-\uDFFE])))?))?|\uDC6F(?:\u200D[\u2640\u2642]\uFE0F?)?|\uDD75(?:\uFE0F|\uD83C[\uDFFB-\uDFFF])?(?:\u200D[\u2640\u2642]\uFE0F?)?|\uDE2E(?:\u200D\uD83D\uDCA8)?|\uDE35(?:\u200D\uD83D\uDCAB)?|\uDE36(?:\u200D\uD83C\uDF2B\uFE0F?)?|\uDE42(?:\u200D[\u2194\u2195]\uFE0F?)?|\uDEB6(?:\uD83C[\uDFFB-\uDFFF])?(?:\u200D(?:[\u2640\u2642]\uFE0F?(?:\u200D\u27A1\uFE0F?)?|\u27A1\uFE0F?))?)|\uD83E(?:[\uDD0C\uDD0F\uDD18-\uDD1F\uDD30-\uDD34\uDD36\uDD77\uDDB5\uDDB6\uDDBB\uDDD2\uDDD3\uDDD5\uDEC3-\uDEC5\uDEF0\uDEF2-\uDEF8](?:\uD83C[\uDFFB-\uDFFF])?|[\uDD26\uDD35\uDD37-\uDD39\uDD3D\uDD3E\uDDB8\uDDB9\uDDCD\uDDCF\uDDD4\uDDD6-\uDDDD](?:\uD83C[\uDFFB-\uDFFF])?(?:\u200D[\u2640\u2642]\uFE0F?)?|[\uDDDE\uDDDF](?:\u200D[\u2640\u2642]\uFE0F?)?|[\uDD0D\uDD0E\uDD10-\uDD17\uDD20-\uDD25\uDD27-\uDD2F\uDD3A\uDD3F-\uDD45\uDD47-\uDD76\uDD78-\uDDB4\uDDB7\uDDBA\uDDBC-\uDDCC\uDDD0\uDDE0-\uDDFF\uDE70-\uDE7C\uDE80-\uDE88\uDE90-\uDEBD\uDEBF-\uDEC2\uDECE-\uDEDB\uDEE0-\uDEE8]|\uDD3C(?:\u200D[\u2640\u2642]\uFE0F?|\uD83C[\uDFFB-\uDFFF])?|\uDDCE(?:\uD83C[\uDFFB-\uDFFF])?(?:\u200D(?:[\u2640\u2642]\uFE0F?(?:\u200D\u27A1\uFE0F?)?|\u27A1\uFE0F?))?|\uDDD1(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\uD83C[\uDF3E\uDF73\uDF7C\uDF84\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]|\uDD1D\u200D\uD83E\uDDD1|\uDDD1\u200D\uD83E\uDDD2(?:\u200D\uD83E\uDDD2)?|\uDDD2(?:\u200D\uD83E\uDDD2)?))|\uD83C(?:\uDFFB(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D(?:\uD83D\uDC8B\u200D)?\uD83E\uDDD1\uD83C[\uDFFC-\uDFFF]|\uD83C[\uDF3E\uDF73\uDF7C\uDF84\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]|\uDD1D\u200D\uD83E\uDDD1\uD83C[\uDFFB-\uDFFF])))?|\uDFFC(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D(?:\uD83D\uDC8B\u200D)?\uD83E\uDDD1\uD83C[\uDFFB\uDFFD-\uDFFF]|\uD83C[\uDF3E\uDF73\uDF7C\uDF84\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]|\uDD1D\u200D\uD83E\uDDD1\uD83C[\uDFFB-\uDFFF])))?|\uDFFD(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D(?:\uD83D\uDC8B\u200D)?\uD83E\uDDD1\uD83C[\uDFFB\uDFFC\uDFFE\uDFFF]|\uD83C[\uDF3E\uDF73\uDF7C\uDF84\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]|\uDD1D\u200D\uD83E\uDDD1\uD83C[\uDFFB-\uDFFF])))?|\uDFFE(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D(?:\uD83D\uDC8B\u200D)?\uD83E\uDDD1\uD83C[\uDFFB-\uDFFD\uDFFF]|\uD83C[\uDF3E\uDF73\uDF7C\uDF84\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]|\uDD1D\u200D\uD83E\uDDD1\uD83C[\uDFFB-\uDFFF])))?|\uDFFF(?:\u200D(?:[\u2695\u2696\u2708]\uFE0F?|\u2764\uFE0F?\u200D(?:\uD83D\uDC8B\u200D)?\uD83E\uDDD1\uD83C[\uDFFB-\uDFFE]|\uD83C[\uDF3E\uDF73\uDF7C\uDF84\uDF93\uDFA4\uDFA8\uDFEB\uDFED]|\uD83D[\uDCBB\uDCBC\uDD27\uDD2C\uDE80\uDE92]|\uD83E(?:[\uDDAF\uDDBC\uDDBD](?:\u200D\u27A1\uFE0F?)?|[\uDDB0-\uDDB3]|\uDD1D\u200D\uD83E\uDDD1\uD83C[\uDFFB-\uDFFF])))?))?|\uDEF1(?:\uD83C(?:\uDFFB(?:\u200D\uD83E\uDEF2\uD83C[\uDFFC-\uDFFF])?|\uDFFC(?:\u200D\uD83E\uDEF2\uD83C[\uDFFB\uDFFD-\uDFFF])?|\uDFFD(?:\u200D\uD83E\uDEF2\uD83C[\uDFFB\uDFFC\uDFFE\uDFFF])?|\uDFFE(?:\u200D\uD83E\uDEF2\uD83C[\uDFFB-\uDFFD\uDFFF])?|\uDFFF(?:\u200D\uD83E\uDEF2\uD83C[\uDFFB-\uDFFE])?))?)/g;
 };
-var emojiRegex$1 = getDefaultExportFromCjs(emojiRegex);
 
-function stringWidth(string, options = {}) {
+function stringWidth(string, options) {
 	if (typeof string !== 'string' || string.length === 0) {
 		return 0;
 	}
 	options = {
 		ambiguousIsNarrow: true,
-		...options
+		countAnsiEscapeCodes: false,
+		...options,
 	};
-	string = stripAnsi(string);
+	if (!options.countAnsiEscapeCodes) {
+		string = stripAnsi(string);
+	}
 	if (string.length === 0) {
 		return 0;
 	}
-	string = string.replace(emojiRegex$1(), '  ');
 	const ambiguousCharacterWidth = options.ambiguousIsNarrow ? 1 : 2;
 	let width = 0;
-	for (const character of string) {
+	for (const {segment: character} of new Intl.Segmenter().segment(string)) {
 		const codePoint = character.codePointAt(0);
 		if (codePoint <= 0x1F || (codePoint >= 0x7F && codePoint <= 0x9F)) {
 			continue;
 		}
-		if (codePoint >= 0x300 && codePoint <= 0x36F) {
+		if (codePoint >= 0x3_00 && codePoint <= 0x3_6F) {
+			continue;
+		}
+		if (emojiRegex().test(character)) {
+			width += 2;
 			continue;
 		}
 		const code = eastAsianWidth.eastAsianWidth(character);
 		switch (code) {
 			case 'F':
-			case 'W':
+			case 'W': {
 				width += 2;
 				break;
-			case 'A':
+			}
+			case 'A': {
 				width += ambiguousCharacterWidth;
 				break;
-			default:
+			}
+			default: {
 				width += 1;
+			}
 		}
 	}
 	return width;
 }
 
+function compareFile(a, b) {
+  return compareString(a, b, 'path')
+}
+function compareMessage(a, b) {
+  return (
+    compareNumber(a, b, 'line') ||
+    compareNumber(a, b, 'column') ||
+    compareBoolean(a, b, 'fatal') ||
+    compareString(a, b, 'source') ||
+    compareString(a, b, 'ruleId') ||
+    compareString(a, b, 'reason')
+  )
+}
+function compareBoolean(a, b, field) {
+  return scoreNullableBoolean(a[field]) - scoreNullableBoolean(b[field])
+}
+function compareNumber(a, b, field) {
+  return (a[field] || 0) - (b[field] || 0)
+}
+function compareString(a, b, field) {
+  return String(a[field] || '').localeCompare(String(b[field] || ''))
+}
+function scoreNullableBoolean(value) {
+  return value ? 0 : value === false ? 1 : 2
+}
+
 function statistics(value) {
-  const result = {true: 0, false: 0, null: 0};
-  if (value) {
-    if (Array.isArray(value)) {
-      list(value);
-    } else {
-      one(value);
-    }
+  const result = {fatal: 0, warn: 0, info: 0};
+  if (!value) {
+    throw new TypeError(
+      'Expected file or message for `value`, not `' + value + '`'
+    )
+  }
+  if (Array.isArray(value)) {
+    list(value);
+  } else {
+    one(value);
   }
   return {
-    fatal: result.true,
-    nonfatal: result.false + result.null,
-    warn: result.false,
-    info: result.null,
-    total: result.true + result.false + result.null
+    fatal: result.fatal,
+    nonfatal: result.warn + result.info,
+    warn: result.warn,
+    info: result.info,
+    total: result.fatal + result.warn + result.info
   }
   function list(value) {
     let index = -1;
@@ -21519,38 +23653,8 @@ function statistics(value) {
   }
   function one(value) {
     if ('messages' in value) return list(value.messages)
-    const field =  (
-      String(
-        value.fatal === undefined || value.fatal === null
-          ? null
-          : Boolean(value.fatal)
-      )
-    );
-    result[field]++;
+    result[value.fatal ? 'fatal' : value.fatal === false ? 'warn' : 'info']++;
   }
-}
-
-const severities = {true: 2, false: 1, null: 0, undefined: 0};
-function sort(file) {
-  file.messages.sort(comparator);
-  return file
-}
-function comparator(a, b) {
-  return (
-    check(a, b, 'line') ||
-    check(a, b, 'column') ||
-    severities[String(b.fatal)] - severities[String(a.fatal)] ||
-    compare(a, b, 'source') ||
-    compare(a, b, 'ruleId') ||
-    compare(a, b, 'reason') ||
-    0
-  )
-}
-function check(a, b, field) {
-  return (a[field] || 0) - (b[field] || 0)
-}
-function compare(a, b, field) {
-  return String(a[field] || '').localeCompare(b[field] || '')
 }
 
 function hasFlag(flag, argv = globalThis.Deno ? globalThis.Deno.args : process$1.argv) {
@@ -21638,7 +23742,7 @@ function _supportsColor(haveStream, {streamIsTTY, sniffFlags = true} = {}) {
 		return 1;
 	}
 	if ('CI' in env) {
-		if ('GITHUB_ACTIONS' in env) {
+		if ('GITHUB_ACTIONS' in env || 'GITEA_ACTIONS' in env) {
 			return 3;
 		}
 		if (['TRAVIS', 'CIRCLECI', 'APPVEYOR', 'GITLAB_CI', 'BUILDKITE', 'DRONE'].some(sign => sign in env) || env.CI_NAME === 'codeship') {
@@ -21691,189 +23795,322 @@ const supportsColor = {
 
 const color = supportsColor.stderr.hasBasic;
 
-const platform = process$1.platform;
-
-const own = {}.hasOwnProperty;
-const chars =
-  platform === 'win32' ? {error: '×', warning: '‼'} : {error: '✖', warning: '⚠'};
-const labels = {
-  true: 'error',
-  false: 'warning',
-  null: 'info',
-  undefined: 'info'
-};
+const eol = /\r?\n|\r/;
 function reporter(files, options) {
-  if (!files) {
-    return ''
+  if (
+    !files ||
+    ('name' in files && 'message' in files)
+  ) {
+    throw new TypeError(
+      'Unexpected value for `files`, expected one or more `VFile`s'
+    )
   }
-  if ('name' in files && 'message' in files) {
-    return String(files.stack || files)
+  const settings = {};
+  const colorEnabled =
+    typeof settings.color === 'boolean' ? settings.color : color;
+  let oneFileMode = false;
+  if (Array.isArray(files)) ; else {
+    oneFileMode = true;
+    files = [files];
   }
-  const options_ = options || {};
-  if (Array.isArray(files)) {
-    return format$1(transform(files, options_), false, options_)
-  }
-  return format$1(transform([files], options_), true, options_)
+  return serializeRows(
+    createRows(
+      {
+        defaultName: settings.defaultName || undefined,
+        oneFileMode,
+        quiet: settings.quiet || false,
+        silent: settings.silent || false,
+        traceLimit:
+          typeof settings.traceLimit === 'number' ? settings.traceLimit : 10,
+        verbose: settings.verbose || false,
+        bold: colorEnabled ? '\u001B[1m' : '',
+        underline: colorEnabled ? '\u001B[4m' : '',
+        normalIntensity: colorEnabled ? '\u001B[22m' : '',
+        noUnderline: colorEnabled ? '\u001B[24m' : '',
+        red: colorEnabled ? '\u001B[31m' : '',
+        cyan: colorEnabled ? '\u001B[36m' : '',
+        green: colorEnabled ? '\u001B[32m' : '',
+        yellow: colorEnabled ? '\u001B[33m' : '',
+        defaultColor: colorEnabled ? '\u001B[39m' : ''
+      },
+      files
+    )
+  )
 }
-function transform(files, options) {
-  const rows = [];
-  const all = [];
-  const sizes = {place: 0, label: 0, reason: 0, ruleId: 0, source: 0};
+function createAncestorsLines(state, ancestors) {
+  const min =
+    ancestors.length > state.traceLimit
+      ? ancestors.length - state.traceLimit
+      : 0;
+  let index = ancestors.length;
+  const lines = [];
+  if (index > min) {
+    lines.unshift('  ' + state.bold + '[trace]' + state.normalIntensity + ':');
+  }
+  while (index-- > min) {
+    const node = ancestors[index];
+    const value = node;
+    const name =
+      typeof value.tagName === 'string'
+        ? value.tagName
+        :
+          typeof value.name === 'string'
+          ? value.name
+          : undefined;
+    const position = stringifyPosition(node.position);
+    lines.push(
+      '    at ' +
+        state.yellow +
+        node.type +
+        (name ? '<' + name + '>' : '') +
+        state.defaultColor +
+        (position ? ' (' + position + ')' : '')
+    );
+  }
+  return lines
+}
+function createByline(state, stats) {
+  let result = '';
+  if (stats.fatal) {
+    result =
+      state.red +
+      '✖' +
+      state.defaultColor +
+      ' ' +
+      stats.fatal +
+      ' ' +
+      (fatalToLabel(true) + (stats.fatal === 1 ? '' : 's'));
+  }
+  if (stats.warn) {
+    result =
+      (result ? result + ', ' : '') +
+      (state.yellow + '⚠' + state.defaultColor) +
+      ' ' +
+      stats.warn +
+      ' ' +
+      (fatalToLabel(false) + (stats.warn === 1 ? '' : 's'));
+  }
+  if (stats.total !== stats.fatal && stats.total !== stats.warn) {
+    result = stats.total + ' messages (' + result + ')';
+  }
+  return result
+}
+function createCauseLines(state, cause) {
+  const lines = ['  ' + state.bold + '[cause]' + state.normalIntensity + ':'];
+  let foundReasonableCause = false;
+  if (cause !== null && typeof cause === 'object') {
+    const stackValue =
+      ('stack' in cause ? String(cause.stack) : undefined) ||
+      ('message' in cause ? String(cause.message) : undefined);
+    if (typeof stackValue === 'string') {
+      foundReasonableCause = true;
+      let causeLines;
+      if ('file' in cause && 'fatal' in cause) {
+        causeLines = createMessageLine(
+          state,
+           (cause)
+        );
+      }
+      else {
+        causeLines = stackValue.split(eol);
+        if ('cause' in cause && cause.cause) {
+          causeLines.push(...createCauseLines(state, cause.cause));
+        }
+      }
+      const head = causeLines[0];
+      if (typeof head === 'string') {
+        causeLines[0] = '    ' + head;
+      } else {
+        head[0] = '    ' + head[0];
+      }
+      lines.push(...causeLines);
+    }
+  }
+  if (!foundReasonableCause) {
+    lines.push('    ' + cause);
+  }
+  return lines
+}
+function createFileLine(state, file) {
+  const stats = statistics(file.messages);
+  const fromPath = file.history[0];
+  const toPath = file.path;
+  let left = '';
+  let right = '';
+  if (!state.oneFileMode || state.defaultName || fromPath) {
+    const name = fromPath || state.defaultName || '<stdin>';
+    left =
+      state.underline +
+      (stats.fatal ? state.red : stats.total ? state.yellow : state.green) +
+      name +
+      state.defaultColor +
+      state.noUnderline +
+      (file.stored && name !== toPath ? ' > ' + toPath : '');
+  }
+  if (file.stored) {
+    right = state.yellow + 'written' + state.defaultColor;
+  } else if (!stats.total) {
+    right = 'no issues found';
+  }
+  return left && right ? left + ': ' + right : left + right
+}
+function createNoteLines(state, note) {
+  const noteLines = note.split(eol);
   let index = -1;
-  while (++index < files.length) {
-    const messages = sort({messages: [...files[index].messages]}).messages;
+  while (++index < noteLines.length) {
+    noteLines[index] = '    ' + noteLines[index];
+  }
+  return [
+    '  ' + state.bold + '[note]' + state.normalIntensity + ':',
+    ...noteLines
+  ]
+}
+function createMessageLine(state, message) {
+  const label = fatalToLabel(message.fatal);
+  let reason = message.stack || message.message;
+  const match = eol.exec(reason);
+  let rest = [];
+  if (match) {
+    rest = reason.slice(match.index + 1).split(eol);
+    reason = reason.slice(0, match.index);
+  }
+  const place = message.place || message.position;
+  const row = [
+    stringifyPosition(place),
+    (label === 'error' ? state.red : state.yellow) + label + state.defaultColor,
+    formatReason(state, reason),
+    message.ruleId || '',
+    message.source || ''
+  ];
+  if (message.cause) {
+    rest.push(...createCauseLines(state, message.cause));
+  }
+  if (state.verbose && message.url) {
+    rest.push(...createUrlLines(state, message.url));
+  }
+  if (state.verbose && message.note) {
+    rest.push(...createNoteLines(state, message.note));
+  }
+  if (state.verbose && message.ancestors) {
+    rest.push(...createAncestorsLines(state, message.ancestors));
+  }
+  return [row, ...rest]
+}
+function createRows(state, files) {
+  const sortedFiles = [...files].sort(compareFile);
+  const all = [];
+  let index = -1;
+  const rows = [];
+  let lastWasMessage = false;
+  while (++index < sortedFiles.length) {
+    const file = sortedFiles[index];
+    const messages = [...file.messages].sort(compareMessage);
     const messageRows = [];
     let offset = -1;
     while (++offset < messages.length) {
       const message = messages[offset];
-      if (!options.silent || message.fatal) {
+      if (!state.silent || message.fatal) {
         all.push(message);
-        const row = {
-          place: stringifyPosition(
-            message.position
-              ? message.position.end.line && message.position.end.column
-                ? message.position
-                : message.position.start
-              : undefined
-          ),
-          label: labels[ (String(message.fatal))],
-          reason:
-            (message.stack || message.message) +
-            (options.verbose && message.note ? '\n' + message.note : ''),
-          ruleId: message.ruleId || '',
-          source: message.source || ''
-        };
-        let key;
-        for (key in row) {
-          if (own.call(row, key)) {
-            sizes[key] = Math.max(size(row[key]), sizes[key] || 0);
-          }
-        }
-        messageRows.push(row);
+        messageRows.push(...createMessageLine(state, message));
       }
     }
-    if ((!options.quiet && !options.silent) || messageRows.length > 0) {
-      rows.push(
-        {type: 'file', file: files[index], stats: statistics(messages)},
-        ...messageRows
-      );
+    if ((!state.quiet && !state.silent) || messageRows.length > 0) {
+      const line = createFileLine(state, file);
+      if (lastWasMessage && line) rows.push('');
+      if (line) rows.push(line);
+      if (messageRows.length > 0) rows.push(...messageRows);
+      lastWasMessage = messageRows.length > 0;
     }
   }
-  return {rows, stats: statistics(all), sizes}
-}
-function format$1(map, one, options) {
-  const enabled =
-    options.color === undefined || options.color === null
-      ? color
-      : options.color;
-  const lines = [];
-  let index = -1;
-  while (++index < map.rows.length) {
-    const row = map.rows[index];
-    if ('type' in row) {
-      const stats = row.stats;
-      let line = row.file.history[0] || options.defaultName || '<stdin>';
-      line =
-        one && !options.defaultName && !row.file.history[0]
-          ? ''
-          : (enabled
-              ? '\u001B[4m'  +
-                (stats.fatal
-                  ? '\u001B[31m'
-                  : stats.total
-                  ? '\u001B[33m'
-                  : '\u001B[32m')  +
-                line +
-                '\u001B[39m\u001B[24m'
-              : line) +
-            (row.file.stored && row.file.path !== row.file.history[0]
-              ? ' > ' + row.file.path
-              : '');
-      if (!stats.total) {
-        line =
-          (line ? line + ': ' : '') +
-          (row.file.stored
-            ? enabled
-              ? '\u001B[33mwritten\u001B[39m'
-              : 'written'
-            : 'no issues found');
-      }
-      if (line) {
-        if (index && !('type' in map.rows[index - 1])) {
-          lines.push('');
-        }
-        lines.push(line);
-      }
-    } else {
-      let reason = row.reason;
-      const match = /\r?\n|\r/.exec(reason);
-      let rest;
-      if (match) {
-        rest = reason.slice(match.index);
-        reason = reason.slice(0, match.index);
-      } else {
-        rest = '';
-      }
-      lines.push(
-        (
-          '  ' +
-          ' '.repeat(map.sizes.place - size(row.place)) +
-          row.place +
-          '  ' +
-          (enabled
-            ? (row.label === 'error'
-                ? '\u001B[31m'
-                : '\u001B[33m')  +
-              row.label +
-              '\u001B[39m'
-            : row.label) +
-          ' '.repeat(map.sizes.label - size(row.label)) +
-          '  ' +
-          reason +
-          ' '.repeat(map.sizes.reason - size(reason)) +
-          '  ' +
-          row.ruleId +
-          ' '.repeat(map.sizes.ruleId - size(row.ruleId)) +
-          '  ' +
-          (row.source || '')
-        ).replace(/ +$/, '') + rest
-      );
-    }
-  }
-  const stats = map.stats;
+  const stats = statistics(all);
   if (stats.fatal || stats.warn) {
+    rows.push('', createByline(state, stats));
+  }
+  return rows
+}
+function createUrlLines(state, url) {
+  return [
+    '  ' + state.bold + '[url]' + state.normalIntensity + ':',
+    '    ' + url
+  ]
+}
+function formatReason(state, reason) {
+  const result = [];
+  const splits = [];
+  let index = reason.indexOf('`');
+  while (index !== -1) {
+    const split = {index, size: 1};
+    splits.push(split);
+    while (reason.codePointAt(index + 1) === 96) {
+      split.size++;
+      index++;
+    }
+    index = reason.indexOf('`', index + 1);
+  }
+  index = -1;
+  let textStart = 0;
+  while (++index < splits.length) {
+    let closeIndex = index;
+    let close;
+    while (++closeIndex < splits.length) {
+      if (splits[index].size === splits[closeIndex].size) {
+        close = splits[closeIndex];
+        break
+      }
+    }
+    if (close) {
+      const codeStart = splits[index].index;
+      const codeEnd = close.index + close.size;
+      result.push(
+        reason.slice(textStart, codeStart) +
+          state.cyan +
+          reason.slice(codeStart, codeEnd) +
+          state.defaultColor
+      );
+      textStart = codeEnd;
+      index = closeIndex;
+    }
+  }
+  result.push(reason.slice(textStart));
+  return state.bold + result.join('') + state.normalIntensity
+}
+function fatalToLabel(value) {
+  return value ? 'error' : value === false ? 'warning' : 'info'
+}
+function serializeRows(rows) {
+  const sizes = [];
+  let index = -1;
+  while (++index < rows.length) {
+    const row = rows[index];
+    if (typeof row === 'string') ; else {
+      let cellIndex = -1;
+      while (++cellIndex < row.length) {
+        const current = sizes[cellIndex] || 0;
+        const size = stringWidth(row[cellIndex]);
+        if (size > current) {
+          sizes[cellIndex] = size;
+        }
+      }
+    }
+  }
+  const lines = [];
+  index = -1;
+  while (++index < rows.length) {
+    const row = rows[index];
     let line = '';
-    if (stats.fatal) {
-      line =
-        (enabled
-          ? '\u001B[31m'  + chars.error + '\u001B[39m'
-          : chars.error) +
-        ' ' +
-        stats.fatal +
-        ' ' +
-        (labels.true + (stats.fatal === 1 ? '' : 's'));
+    if (typeof row === 'string') {
+      line = row;
+    } else {
+      let cellIndex = -1;
+      while (++cellIndex < row.length) {
+        const cell = row[cellIndex] || '';
+        const max = (sizes[cellIndex] || 0) + 1;
+        line += cell + ' '.repeat(max - stringWidth(cell));
+      }
     }
-    if (stats.warn) {
-      line =
-        (line ? line + ', ' : '') +
-        (enabled
-          ? '\u001B[33m'  + chars.warning + '\u001B[39m'
-          : chars.warning) +
-        ' ' +
-        stats.warn +
-        ' ' +
-        (labels.false + (stats.warn === 1 ? '' : 's'));
-    }
-    if (stats.total !== stats.fatal && stats.total !== stats.warn) {
-      line = stats.total + ' messages (' + line + ')';
-    }
-    lines.push('', line);
+    lines.push(line.trimEnd());
   }
   return lines.join('\n')
-}
-function size(value) {
-  const match = /\r?\n|\r/.exec(value);
-  return stringWidth(match ? value.slice(0, match.index) : value)
 }
 
 const paths = process.argv.slice(2);

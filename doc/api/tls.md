@@ -22,8 +22,6 @@ calling `require('node:tls')` will result in an error being thrown.
 
 When using CommonJS, the error thrown can be caught using try/catch:
 
-<!-- eslint-skip -->
-
 ```cjs
 let tls;
 try {
@@ -175,6 +173,8 @@ specifying a cipher suite with the `ciphers` option. The list of available
 ciphers can be retrieved via `openssl ciphers -v 'PSK'`. All TLS 1.3
 ciphers are eligible for PSK and can be retrieved via
 `openssl ciphers -v -s -tls1_3 -psk`.
+On the client connection, a custom `checkServerIdentity` should be passed
+because the default one will fail in the absence of a certificate.
 
 According to the [RFC 4279][], PSK identities up to 128 bytes in length and
 PSKs up to 64 bytes in length must be supported. As of OpenSSL 1.1.0
@@ -182,6 +182,30 @@ maximum identity size is 128 bytes, and maximum PSK length is 256 bytes.
 
 The current implementation doesn't support asynchronous PSK callbacks due to the
 limitations of the underlying OpenSSL API.
+
+To use TLS-PSK, client and server must specify the `pskCallback` option,
+a function that returns the PSK to use (which must be compatible with
+the selected cipher's digest).
+
+It will be called first on the client:
+
+* hint: {string} optional message sent from the server to help the client
+  decide which identity to use during negotiation.
+  Always `null` if TLS 1.3 is used.
+* Returns: {Object} in the form
+  `{ psk: <Buffer|TypedArray|DataView>, identity: <string> }` or `null`.
+
+Then on the server:
+
+* socket: {tls.TLSSocket} the server socket instance, equivalent to `this`.
+* identity: {string} identity parameter sent from the client.
+* Returns: {Buffer|TypedArray|DataView} the PSK (or `null`).
+
+A return value of `null` stops the negotiation process and sends an
+`unknown_psk_identity` alert message to the other party.
+If the server wishes to hide the fact that the PSK identity was not known,
+the callback must provide some random data as `psk` to make the connection
+fail with `decrypt_error` before negotiation is finished.
 
 ### Client-initiated renegotiation attack mitigation
 
@@ -285,8 +309,8 @@ failures, it is easy to not notice unnecessarily poor TLS performance. The
 OpenSSL CLI can be used to verify that servers are resuming sessions. Use the
 `-reconnect` option to `openssl s_client`, for example:
 
-```console
-$ openssl s_client -connect localhost:443 -reconnect
+```bash
+openssl s_client -connect localhost:443 -reconnect
 ```
 
 Read through the debug output. The first connection should say "New", for
@@ -701,8 +725,8 @@ is set to describe how authorization failed. Depending on the settings
 of the TLS server, unauthorized connections may still be accepted.
 
 The `tlsSocket.alpnProtocol` property is a string that contains the selected
-ALPN protocol. When ALPN has no selected protocol, `tlsSocket.alpnProtocol`
-equals `false`.
+ALPN protocol. When ALPN has no selected protocol because the client or the
+server did not send an ALPN extension, `tlsSocket.alpnProtocol` equals `false`.
 
 The `tlsSocket.servername` property is a string containing the server name
 requested via SNI.
@@ -1192,7 +1216,9 @@ certificate.
 
 <!-- YAML
 changes:
-  - version: v18.13.0
+  - version:
+      - v19.1.0
+      - v18.13.0
     pr-url: https://github.com/nodejs/node/pull/44935
     description: Add "ca" property.
   - version:
@@ -1507,6 +1533,20 @@ When running as the server, the socket will be destroyed with an error after
 For TLSv1.3, renegotiation cannot be initiated, it is not supported by the
 protocol.
 
+### `tlsSocket.setKeyCert(context)`
+
+<!-- YAML
+added: v20.17.0
+-->
+
+* `context` {Object|tls.SecureContext} An object containing at least `key` and
+  `cert` properties from the [`tls.createSecureContext()`][] `options`, or a
+  TLS context object created with [`tls.createSecureContext()`][] itself.
+
+The `tlsSocket.setKeyCert()` method sets the private key and certificate to use
+for the socket. This is mainly useful if you wish to select a server certificate
+from a TLS server's `ALPNCallback`.
+
 ### `tlsSocket.setMaxSendFragment(size)`
 
 <!-- YAML
@@ -1646,25 +1686,7 @@ changes:
     verified against the list of supplied CAs. An `'error'` event is emitted if
     verification fails; `err.code` contains the OpenSSL error code. **Default:**
     `true`.
-  * `pskCallback` {Function}
-
-    * hint: {string} optional message sent from the server to help client
-      decide which identity to use during negotiation.
-      Always `null` if TLS 1.3 is used.
-    * Returns: {Object} in the form
-      `{ psk: <Buffer|TypedArray|DataView>, identity: <string> }`
-      or `null` to stop the negotiation process. `psk` must be
-      compatible with the selected cipher's digest.
-      `identity` must use UTF-8 encoding.
-
-    When negotiating TLS-PSK (pre-shared keys), this function is called
-    with optional identity `hint` provided by the server or `null`
-    in case of TLS 1.3 where `hint` was removed.
-    It will be necessary to provide a custom `tls.checkServerIdentity()`
-    for the connection as the default one will try to check host name/IP
-    of the server against the certificate but that's not applicable for PSK
-    because there won't be a certificate present.
-    More information can be found in the [RFC 4279][].
+  * `pskCallback` {Function} For TLS-PSK negotiation, see [Pre-shared keys][].
   * `ALPNProtocols`: {string\[]|Buffer\[]|TypedArray\[]|DataView\[]|Buffer|
     TypedArray|DataView}
     An array of strings, `Buffer`s, `TypedArray`s, or `DataView`s, or a
@@ -1791,7 +1813,14 @@ argument.
 <!-- YAML
 added: v0.11.13
 changes:
-  - version: v18.16.0
+  - version: v20.16.0
+    pr-url: https://github.com/nodejs/node/pull/53329
+    description: The `clientCertEngine`, `privateKeyEngine` and
+                 `privateKeyIdentifier` options depend on custom engine
+                 support in OpenSSL which is deprecated in OpenSSL 3.
+  - version:
+    - v19.8.0
+    - v18.16.0
     pr-url: https://github.com/nodejs/node/pull/46978
     description: The `dhparam` option can now be set to `'auto'` to
                  enable DHE with appropriate well-known parameters.
@@ -1876,7 +1905,7 @@ changes:
     ciphers can be obtained via [`tls.getCiphers()`][]. Cipher names must be
     uppercased in order for OpenSSL to accept them.
   * `clientCertEngine` {string} Name of an OpenSSL engine which can provide the
-    client certificate.
+    client certificate. **Deprecated.**
   * `crl` {string|string\[]|Buffer|Buffer\[]} PEM formatted CRLs (Certificate
     Revocation Lists).
   * `dhparam` {string|Buffer} `'auto'` or custom Diffie-Hellman parameters,
@@ -1904,11 +1933,11 @@ changes:
     decrypted with `object.passphrase` if provided, or `options.passphrase` if
     it is not.
   * `privateKeyEngine` {string} Name of an OpenSSL engine to get private key
-    from. Should be used together with `privateKeyIdentifier`.
+    from. Should be used together with `privateKeyIdentifier`. **Deprecated.**
   * `privateKeyIdentifier` {string} Identifier of a private key managed by
     an OpenSSL engine. Should be used together with `privateKeyEngine`.
     Should not be set together with `key`, because both options define a
-    private key in different ways.
+    private key in different ways. **Deprecated.**
   * `maxVersion` {string} Optionally set the maximum TLS version to allow. One
     of `'TLSv1.3'`, `'TLSv1.2'`, `'TLSv1.1'`, or `'TLSv1'`. Cannot be specified
     along with the `secureProtocol` option; use one or the other.
@@ -2045,6 +2074,20 @@ where `secureSocket` has the same API as `pair.cleartext`.
 <!-- YAML
 added: v0.3.2
 changes:
+  - version: v20.16.0
+    pr-url: https://github.com/nodejs/node/pull/53329
+    description: The `clientCertEngine` option depends on custom engine
+                 support in OpenSSL which is deprecated in OpenSSL 3.
+  - version:
+    - v20.4.0
+    - v18.19.0
+    pr-url: https://github.com/nodejs/node/pull/45190
+    description: The `options` parameter can now include `ALPNCallback`.
+  - version: v19.0.0
+    pr-url: https://github.com/nodejs/node/pull/44031
+    description: If `ALPNProtocols` is set, incoming connections that send an
+                 ALPN extension with no supported protocols are terminated with
+                 a fatal `no_application_protocol` alert.
   - version: v12.3.0
     pr-url: https://github.com/nodejs/node/pull/27665
     description: The `options` parameter now supports `net.createServer()`
@@ -2070,8 +2113,19 @@ changes:
     e.g. `0x05hello0x05world`, where the first byte is the length of the next
     protocol name. Passing an array is usually much simpler, e.g.
     `['hello', 'world']`. (Protocols should be ordered by their priority.)
+  * `ALPNCallback`: {Function} If set, this will be called when a
+    client opens a connection using the ALPN extension. One argument will
+    be passed to the callback: an object containing `servername` and
+    `protocols` fields, respectively containing the server name from
+    the SNI extension (if any) and an array of ALPN protocol name strings. The
+    callback must return either one of the strings listed in
+    `protocols`, which will be returned to the client as the selected
+    ALPN protocol, or `undefined`, to reject the connection with a fatal alert.
+    If a string is returned that does not match one of the client's ALPN
+    protocols, an error will be thrown. This option cannot be used with the
+    `ALPNProtocols` option, and setting both options will throw an error.
   * `clientCertEngine` {string} Name of an OpenSSL engine which can provide the
-    client certificate.
+    client certificate. **Deprecated.**
   * `enableTrace` {boolean} If `true`, [`tls.TLSSocket.enableTrace()`][] will be
     called on new connections. Tracing can be enabled after the secure
     connection is established, but this option must be used to trace the secure
@@ -2100,25 +2154,7 @@ changes:
     default callback with high-level API will be used (see below).
   * `ticketKeys`: {Buffer} 48-bytes of cryptographically strong pseudorandom
     data. See [Session Resumption][] for more information.
-  * `pskCallback` {Function}
-
-    * socket: {tls.TLSSocket} the server [`tls.TLSSocket`][] instance for
-      this connection.
-    * identity: {string} identity parameter sent from the client.
-    * Returns: {Buffer|TypedArray|DataView} pre-shared key that must either be
-      a buffer or `null` to stop the negotiation process. Returned PSK must be
-      compatible with the selected cipher's digest.
-
-    When negotiating TLS-PSK (pre-shared keys), this function is called
-    with the identity provided by the client.
-    If the return value is `null` the negotiation process will stop and an
-    "unknown\_psk\_identity" alert message will be sent to the other party.
-    If the server wishes to hide the fact that the PSK identity was not known,
-    the callback must provide some random data as `psk` to make the connection
-    fail with "decrypt\_error" before negotiation is finished.
-    PSK ciphers are disabled by default, and using TLS-PSK thus
-    requires explicitly specifying a cipher suite with the `ciphers` option.
-    More information can be found in the [RFC 4279][].
+  * `pskCallback` {Function} For TLS-PSK negotiation, see [Pre-shared keys][].
   * `pskIdentityHint` {string} optional hint to send to a client to help
     with selecting the identity during TLS-PSK negotiation. Will be ignored
     in TLS 1.3. Upon failing to set pskIdentityHint `'tlsClientError'` will be
@@ -2250,7 +2286,7 @@ added: v11.4.0
 ## `tls.DEFAULT_CIPHERS`
 
 <!-- YAML
-added: v18.16.0
+added: v19.8.0
 -->
 
 * {string} The default value of the `ciphers` option of
@@ -2267,6 +2303,7 @@ added: v18.16.0
 [Mozilla's publicly trusted list of CAs]: https://hg.mozilla.org/mozilla-central/raw-file/tip/security/nss/lib/ckfw/builtins/certdata.txt
 [OCSP request]: https://en.wikipedia.org/wiki/OCSP_stapling
 [OpenSSL Options]: crypto.md#openssl-options
+[Pre-shared keys]: #pre-shared-keys
 [RFC 2246]: https://www.ietf.org/rfc/rfc2246.txt
 [RFC 4086]: https://tools.ietf.org/html/rfc4086
 [RFC 4279]: https://tools.ietf.org/html/rfc4279

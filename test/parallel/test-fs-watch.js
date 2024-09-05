@@ -17,7 +17,7 @@ class WatchTestCase {
     this.field = field;
     this.shouldSkip = !shouldInclude;
   }
-  get dirPath() { return join(tmpdir.path, this.dirName); }
+  get dirPath() { return tmpdir.resolve(this.dirName); }
   get filePath() { return join(this.dirPath, this.fileName); }
 }
 
@@ -67,7 +67,7 @@ for (const testCase of cases) {
       clearInterval(interval);
       interval = null;
     }
-    if (common.isOSX || common.isIOS)
+    if (common.isMacOS || common.isIOS)
       assert.strictEqual(['rename', 'change'].includes(eventType), true);
     else
       assert.strictEqual(eventType, 'change');

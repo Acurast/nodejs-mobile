@@ -29,7 +29,7 @@ using v8::Exception;
 using v8::FunctionCallbackInfo;
 using v8::HandleScope;
 using v8::Isolate;
-using v8::Just;
+using v8::JustVoid;
 using v8::Local;
 using v8::Maybe;
 using v8::MaybeLocal;
@@ -229,8 +229,7 @@ void SetFipsCrypto(const FunctionCallbackInfo<Value>& args) {
 
   CHECK(!per_process::cli_options->force_fips_crypto);
   Environment* env = Environment::GetCurrent(args);
-  // TODO(addaleax): This should not be possible to set from worker threads.
-  // CHECK(env->owns_process_state());
+  CHECK(env->owns_process_state());
   bool enable = args[0]->BooleanValue(env->isolate());
 
 #if OPENSSL_VERSION_MAJOR >= 3
@@ -254,7 +253,6 @@ void TestFipsCrypto(const v8::FunctionCallbackInfo<v8::Value>& args) {
   Mutex::ScopedLock lock(per_process::cli_options_mutex);
   Mutex::ScopedLock fips_lock(fips_mutex);
 
-#ifdef OPENSSL_FIPS
 #if OPENSSL_VERSION_MAJOR >= 3
   OSSL_PROVIDER* fips_provider = nullptr;
   if (OSSL_PROVIDER_available(nullptr, "fips")) {
@@ -263,11 +261,12 @@ void TestFipsCrypto(const v8::FunctionCallbackInfo<v8::Value>& args) {
   const auto enabled = fips_provider == nullptr ? 0 :
       OSSL_PROVIDER_self_test(fips_provider) ? 1 : 0;
 #else
+#ifdef OPENSSL_FIPS
   const auto enabled = FIPS_selftest() ? 1 : 0;
-#endif
 #else  // OPENSSL_FIPS
   const auto enabled = 0;
 #endif  // OPENSSL_FIPS
+#endif
 
   args.GetReturnValue().Set(enabled);
 }
@@ -403,8 +402,8 @@ ByteSource ByteSource::FromEncodedString(Environment* env,
 
 ByteSource ByteSource::FromStringOrBuffer(Environment* env,
                                           Local<Value> value) {
-  return IsAnyByteSource(value) ? FromBuffer(value)
-                                : FromString(env, value.As<String>());
+  return IsAnyBufferSource(value) ? FromBuffer(value)
+                                  : FromString(env, value.As<String>());
 }
 
 ByteSource ByteSource::FromString(Environment* env, Local<String> str,
@@ -430,9 +429,9 @@ ByteSource ByteSource::FromSecretKeyBytes(
   // A key can be passed as a string, buffer or KeyObject with type 'secret'.
   // If it is a string, we need to convert it to a buffer. We are not doing that
   // in JS to avoid creating an unprotected copy on the heap.
-  return value->IsString() || IsAnyByteSource(value) ?
-           ByteSource::FromStringOrBuffer(env, value) :
-           ByteSource::FromSymmetricKeyObjectHandle(value);
+  return value->IsString() || IsAnyBufferSource(value)
+             ? ByteSource::FromStringOrBuffer(env, value)
+             : ByteSource::FromSymmetricKeyObjectHandle(value);
 }
 
 ByteSource ByteSource::NullTerminatedCopy(Environment* env,
@@ -458,9 +457,10 @@ ByteSource ByteSource::Foreign(const void* data, size_t size) {
 }
 
 namespace error {
-Maybe<bool> Decorate(Environment* env, Local<Object> obj,
-              unsigned long err) {  // NOLINT(runtime/int)
-  if (err == 0) return Just(true);  // No decoration necessary.
+Maybe<void> Decorate(Environment* env,
+                     Local<Object> obj,
+                     unsigned long err) {  // NOLINT(runtime/int)
+  if (err == 0) return JustVoid();         // No decoration necessary.
 
   const char* ls = ERR_lib_error_string(err);
   const char* fs = ERR_func_error_string(err);
@@ -472,19 +472,19 @@ Maybe<bool> Decorate(Environment* env, Local<Object> obj,
   if (ls != nullptr) {
     if (obj->Set(context, env->library_string(),
                  OneByteString(isolate, ls)).IsNothing()) {
-      return Nothing<bool>();
+      return Nothing<void>();
     }
   }
   if (fs != nullptr) {
     if (obj->Set(context, env->function_string(),
                  OneByteString(isolate, fs)).IsNothing()) {
-      return Nothing<bool>();
+      return Nothing<void>();
     }
   }
   if (rs != nullptr) {
     if (obj->Set(context, env->reason_string(),
                  OneByteString(isolate, rs)).IsNothing()) {
-      return Nothing<bool>();
+      return Nothing<void>();
     }
 
     // SSL has no API to recover the error name from the number, so we
@@ -557,10 +557,10 @@ Maybe<bool> Decorate(Environment* env, Local<Object> obj,
     if (obj->Set(env->isolate()->GetCurrentContext(),
              env->code_string(),
              OneByteString(env->isolate(), code)).IsNothing())
-      return Nothing<bool>();
+      return Nothing<void>();
   }
 
-  return Just(true);
+  return JustVoid();
 }
 }  // namespace error
 
@@ -638,6 +638,13 @@ void SetEngine(const FunctionCallbackInfo<Value>& args) {
   if (!args[1]->Uint32Value(env->context()).To(&flags)) return;
 
   const node::Utf8Value engine_id(env->isolate(), args[0]);
+
+  if (UNLIKELY(env->permission()->enabled())) {
+    return THROW_ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED(
+        env,
+        "Programmatic selection of OpenSSL engines is unsupported while the "
+        "experimental permission model is enabled");
+  }
 
   args.GetReturnValue().Set(SetEngine(*engine_id, flags));
 }

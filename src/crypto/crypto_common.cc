@@ -209,6 +209,8 @@ bool SetGroups(SecureContext* sc, const char* groups) {
   return SSL_CTX_set1_groups_list(sc->ctx().get(), groups) == 1;
 }
 
+// When adding or removing errors below, please also update the list in the API
+// documentation. See the "OpenSSL Error Codes" section of doc/api/errors.md
 const char* X509ErrorCode(long err) {  // NOLINT(runtime/int)
   const char* code = "UNSPECIFIED";
 #define CASE_X509_ERR(CODE) case X509_V_ERR_##CODE: code = #CODE; break;
@@ -423,26 +425,18 @@ MaybeLocal<Value> GetCurveName(Environment* env, const int nid) {
       MaybeLocal<Value>(Undefined(env->isolate()));
 }
 
-MaybeLocal<Value> GetECPubKey(
-    Environment* env,
-    const EC_GROUP* group,
-    const ECPointer& ec) {
-  const EC_POINT* pubkey = EC_KEY_get0_public_key(ec.get());
+MaybeLocal<Value> GetECPubKey(Environment* env,
+                              const EC_GROUP* group,
+                              OSSL3_CONST EC_KEY* ec) {
+  const EC_POINT* pubkey = EC_KEY_get0_public_key(ec);
   if (pubkey == nullptr)
     return Undefined(env->isolate());
 
-  return ECPointToBuffer(
-      env,
-      group,
-      pubkey,
-      EC_KEY_get_conv_form(ec.get()),
-      nullptr).FromMaybe(Local<Object>());
+  return ECPointToBuffer(env, group, pubkey, EC_KEY_get_conv_form(ec), nullptr)
+      .FromMaybe(Local<Object>());
 }
 
-MaybeLocal<Value> GetECGroup(
-    Environment* env,
-    const EC_GROUP* group,
-    const ECPointer& ec) {
+MaybeLocal<Value> GetECGroupBits(Environment* env, const EC_GROUP* group) {
   if (group == nullptr)
     return Undefined(env->isolate());
 
@@ -453,8 +447,8 @@ MaybeLocal<Value> GetECGroup(
   return Integer::New(env->isolate(), bits);
 }
 
-MaybeLocal<Object> GetPubKey(Environment* env, const RSAPointer& rsa) {
-  int size = i2d_RSA_PUBKEY(rsa.get(), nullptr);
+MaybeLocal<Object> GetPubKey(Environment* env, OSSL3_CONST RSA* rsa) {
+  int size = i2d_RSA_PUBKEY(rsa, nullptr);
   CHECK_GE(size, 0);
 
   std::unique_ptr<BackingStore> bs;
@@ -464,7 +458,7 @@ MaybeLocal<Object> GetPubKey(Environment* env, const RSAPointer& rsa) {
   }
 
   unsigned char* serialized = reinterpret_cast<unsigned char*>(bs->Data());
-  CHECK_GE(i2d_RSA_PUBKEY(rsa.get(), &serialized), 0);
+  CHECK_GE(i2d_RSA_PUBKEY(rsa, &serialized), 0);
 
   Local<ArrayBuffer> ab = ArrayBuffer::New(env->isolate(), std::move(bs));
   return Buffer::New(env, ab, 0, ab->ByteLength()).FromMaybe(Local<Object>());
@@ -492,7 +486,7 @@ MaybeLocal<Value> GetModulusString(
 }
 }  // namespace
 
-MaybeLocal<Object> GetRawDERCertificate(Environment* env, X509* cert) {
+MaybeLocal<Value> GetRawDERCertificate(Environment* env, X509* cert) {
   int size = i2d_X509(cert, nullptr);
 
   std::unique_ptr<BackingStore> bs;
@@ -815,8 +809,7 @@ static bool PrintGeneralName(const BIOPointer& out, const GENERAL_NAME* gen) {
 }
 
 bool SafeX509SubjectAltNamePrint(const BIOPointer& out, X509_EXTENSION* ext) {
-  const X509V3_EXT_METHOD* method = X509V3_EXT_get(ext);
-  CHECK(method == X509V3_EXT_get_nid(NID_subject_alt_name));
+  CHECK_EQ(OBJ_obj2nid(X509_EXTENSION_get_object(ext)), NID_subject_alt_name);
 
   GENERAL_NAMES* names = static_cast<GENERAL_NAMES*>(X509V3_EXT_d2i(ext));
   if (names == nullptr)
@@ -840,8 +833,7 @@ bool SafeX509SubjectAltNamePrint(const BIOPointer& out, X509_EXTENSION* ext) {
 }
 
 bool SafeX509InfoAccessPrint(const BIOPointer& out, X509_EXTENSION* ext) {
-  const X509V3_EXT_METHOD* method = X509V3_EXT_get(ext);
-  CHECK(method == X509V3_EXT_get_nid(NID_info_access));
+  CHECK_EQ(OBJ_obj2nid(X509_EXTENSION_get_object(ext)), NID_info_access);
 
   AUTHORITY_INFO_ACCESS* descs =
       static_cast<AUTHORITY_INFO_ACCESS*>(X509V3_EXT_d2i(ext));
@@ -872,10 +864,9 @@ bool SafeX509InfoAccessPrint(const BIOPointer& out, X509_EXTENSION* ext) {
   return ok;
 }
 
-v8::MaybeLocal<v8::Value> GetSubjectAltNameString(
-    Environment* env,
-    const BIOPointer& bio,
-    X509* cert) {
+v8::MaybeLocal<v8::Value> GetSubjectAltNameString(Environment* env,
+                                                  X509* cert,
+                                                  const BIOPointer& bio) {
   int index = X509_get_ext_by_NID(cert, NID_subject_alt_name, -1);
   if (index < 0)
     return Undefined(env->isolate());
@@ -891,10 +882,9 @@ v8::MaybeLocal<v8::Value> GetSubjectAltNameString(
   return ToV8Value(env, bio);
 }
 
-v8::MaybeLocal<v8::Value> GetInfoAccessString(
-    Environment* env,
-    const BIOPointer& bio,
-    X509* cert) {
+v8::MaybeLocal<v8::Value> GetInfoAccessString(Environment* env,
+                                              X509* cert,
+                                              const BIOPointer& bio) {
   int index = X509_get_ext_by_NID(cert, NID_info_access, -1);
   if (index < 0)
     return Undefined(env->isolate());
@@ -910,10 +900,9 @@ v8::MaybeLocal<v8::Value> GetInfoAccessString(
   return ToV8Value(env, bio);
 }
 
-MaybeLocal<Value> GetIssuerString(
-    Environment* env,
-    const BIOPointer& bio,
-    X509* cert) {
+MaybeLocal<Value> GetIssuerString(Environment* env,
+                                  X509* cert,
+                                  const BIOPointer& bio) {
   X509_NAME* issuer_name = X509_get_issuer_name(cert);
   if (X509_NAME_print_ex(
           bio.get(),
@@ -927,10 +916,9 @@ MaybeLocal<Value> GetIssuerString(
   return ToV8Value(env, bio);
 }
 
-MaybeLocal<Value> GetSubject(
-    Environment* env,
-    const BIOPointer& bio,
-    X509* cert) {
+MaybeLocal<Value> GetSubject(Environment* env,
+                             X509* cert,
+                             const BIOPointer& bio) {
   if (X509_NAME_print_ex(
           bio.get(),
           X509_get_subject_name(cert),
@@ -1108,8 +1096,7 @@ MaybeLocal<Object> GetEphemeralKey(Environment* env, const SSLPointer& ssl) {
 
   EscapableHandleScope scope(env->isolate());
   Local<Object> info = Object::New(env->isolate());
-  if (!SSL_get_server_tmp_key(ssl.get(), &raw_key))
-    return scope.Escape(info);
+  if (!SSL_get_peer_tmp_key(ssl.get(), &raw_key)) return scope.Escape(info);
 
   Local<Context> context = env->context();
   crypto::EVPKeyPointer key(raw_key);
@@ -1132,8 +1119,8 @@ MaybeLocal<Object> GetEphemeralKey(Environment* env, const SSLPointer& ssl) {
       {
         const char* curve_name;
         if (kid == EVP_PKEY_EC) {
-          ECKeyPointer ec(EVP_PKEY_get1_EC_KEY(key.get()));
-          int nid = EC_GROUP_get_curve_name(EC_KEY_get0_group(ec.get()));
+          OSSL3_CONST EC_KEY* ec = EVP_PKEY_get0_EC_KEY(key.get());
+          int nid = EC_GROUP_get_curve_name(EC_KEY_get0_group(ec));
           curve_name = OBJ_nid2sn(nid);
         } else {
           curve_name = OBJ_nid2sn(kid);
@@ -1283,25 +1270,25 @@ MaybeLocal<Object> X509ToObject(
       !Set<Value>(context,
                   info,
                   env->subjectaltname_string(),
-                  GetSubjectAltNameString(env, bio, cert)) ||
+                  GetSubjectAltNameString(env, cert, bio)) ||
       !Set<Value>(context,
                   info,
                   env->infoaccess_string(),
-                  GetInfoAccessString(env, bio, cert)) ||
+                  GetInfoAccessString(env, cert, bio)) ||
       !Set<Boolean>(context, info, env->ca_string(), is_ca)) {
     return MaybeLocal<Object>();
   }
 
-  EVPKeyPointer pkey(X509_get_pubkey(cert));
-  RSAPointer rsa;
-  ECPointer ec;
-  if (pkey) {
-    switch (EVP_PKEY_id(pkey.get())) {
+  OSSL3_CONST EVP_PKEY* pkey = X509_get0_pubkey(cert);
+  OSSL3_CONST RSA* rsa = nullptr;
+  OSSL3_CONST EC_KEY* ec = nullptr;
+  if (pkey != nullptr) {
+    switch (EVP_PKEY_id(pkey)) {
       case EVP_PKEY_RSA:
-        rsa.reset(EVP_PKEY_get1_RSA(pkey.get()));
+        rsa = EVP_PKEY_get0_RSA(pkey);
         break;
       case EVP_PKEY_EC:
-        ec.reset(EVP_PKEY_get1_EC_KEY(pkey.get()));
+        ec = EVP_PKEY_get0_EC_KEY(pkey);
         break;
     }
   }
@@ -1309,7 +1296,7 @@ MaybeLocal<Object> X509ToObject(
   if (rsa) {
     const BIGNUM* n;
     const BIGNUM* e;
-    RSA_get0_key(rsa.get(), &n, &e, nullptr);
+    RSA_get0_key(rsa, &n, &e, nullptr);
     if (!Set<Value>(context,
                     info,
                     env->modulus_string(),
@@ -1326,16 +1313,12 @@ MaybeLocal<Object> X509ToObject(
       return MaybeLocal<Object>();
     }
   } else if (ec) {
-    const EC_GROUP* group = EC_KEY_get0_group(ec.get());
+    const EC_GROUP* group = EC_KEY_get0_group(ec);
 
-    if (!Set<Value>(context,
-                    info,
-                    env->bits_string(),
-                    GetECGroup(env, group, ec)) ||
-        !Set<Value>(context,
-                    info,
-                    env->pubkey_string(),
-                    GetECPubKey(env, group, ec))) {
+    if (!Set<Value>(
+            context, info, env->bits_string(), GetECGroupBits(env, group)) ||
+        !Set<Value>(
+            context, info, env->pubkey_string(), GetECPubKey(env, group, ec))) {
       return MaybeLocal<Object>();
     }
 
@@ -1358,11 +1341,6 @@ MaybeLocal<Object> X509ToObject(
       // but aren't used much (at all?) with X.509/TLS. Support later if needed.
     }
   }
-
-  // pkey, rsa, and ec pointers are no longer needed.
-  pkey.reset();
-  rsa.reset();
-  ec.reset();
 
   if (!Set<Value>(context,
                   info,
@@ -1390,18 +1368,14 @@ MaybeLocal<Object> X509ToObject(
                   info,
                   env->fingerprint512_string(),
                   GetFingerprintDigest(env, EVP_sha512(), cert)) ||
-      !Set<Value>(context,
-                  info,
-                  env->ext_key_usage_string(),
-                  GetKeyUsage(env, cert)) ||
+      !Set<Value>(
+          context, info, env->ext_key_usage_string(), GetKeyUsage(env, cert)) ||
       !Set<Value>(context,
                   info,
                   env->serial_number_string(),
                   GetSerialNumber(env, cert)) ||
-      !Set<Object>(context,
-                   info,
-                   env->raw_string(),
-                   GetRawDERCertificate(env, cert))) {
+      !Set<Value>(
+          context, info, env->raw_string(), GetRawDERCertificate(env, cert))) {
     return MaybeLocal<Object>();
   }
 

@@ -1,4 +1,4 @@
-// Flags: --no-warnings
+// Flags: --expose-internals --no-warnings --expose-gc
 'use strict';
 const common = require('../common');
 const {
@@ -6,22 +6,27 @@ const {
   EventEmitter,
 } = require('events');
 const assert = require('assert');
+const { kWeakHandler } = require('internal/event_target');
+const { setTimeout } = require('timers/promises');
 
 common.expectWarning({
   MaxListenersExceededWarning: [
     ['Possible EventTarget memory leak detected. 3 foo listeners added to ' +
-     'EventTarget. Use events.setMaxListeners() ' +
+     'EventTarget. MaxListeners is 2. Use events.setMaxListeners() ' +
      'to increase limit'],
     ['Possible EventTarget memory leak detected. 3 foo listeners added to ' +
      '[MessagePort [EventTarget]]. ' +
+     'MaxListeners is 2. ' +
      'Use events.setMaxListeners() to increase ' +
      'limit'],
     ['Possible EventTarget memory leak detected. 3 foo listeners added to ' +
      '[MessagePort [EventTarget]]. ' +
+     'MaxListeners is 2. ' +
      'Use events.setMaxListeners() to increase ' +
      'limit'],
     ['Possible EventTarget memory leak detected. 3 foo listeners added to ' +
      '[AbortSignal]. ' +
+     'MaxListeners is 2. ' +
      'Use events.setMaxListeners() to increase ' +
      'limit'],
   ],
@@ -72,4 +77,21 @@ common.expectWarning({
   const ee = new EventEmitter();
   setMaxListeners(2, ee);
   assert.strictEqual(ee.getMaxListeners(), 2);
+}
+
+{
+  (async () => {
+    // Test that EventTarget listener don't emit MaxListenersExceededWarning for weak listeners that GCed
+    const et = new EventTarget();
+    setMaxListeners(2, et);
+
+    for (let i = 0; i <= 3; i++) {
+      et.addEventListener('foo', () => {}, {
+        [kWeakHandler]: {},
+      });
+
+      await setTimeout(0);
+      global.gc();
+    }
+  })().then(common.mustCall(), common.mustNotCall());
 }

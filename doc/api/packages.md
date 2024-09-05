@@ -55,6 +55,8 @@ along with a reference for the [`package.json`][] fields defined by Node.js.
 
 ## Determining module system
 
+### Introduction
+
 Node.js will treat the following as [ES modules][] when passed to `node` as the
 initial input, or when referenced by `import` statements or `import()`
 expressions:
@@ -67,14 +69,18 @@ expressions:
 * Strings passed in as an argument to `--eval`, or piped to `node` via `STDIN`,
   with the flag `--input-type=module`.
 
-Node.js will treat as [CommonJS][] all other forms of input, such as `.js` files
-where the nearest parent `package.json` file contains no top-level `"type"`
-field, or string input without the flag `--input-type`. This behavior is to
-preserve backward compatibility. However, now that Node.js supports both
-CommonJS and ES modules, it is best to be explicit whenever possible. Node.js
-will treat the following as CommonJS when passed to `node` as the initial input,
-or when referenced by `import` statements, `import()` expressions, or
-`require()` expressions:
+* When using [`--experimental-detect-module`][], code containing syntax only
+  successfully parsed as [ES modules][], such as `import` or `export`
+  statements or `import.meta`, having no explicit marker of how it should be
+  interpreted. Explicit markers are `.mjs` or `.cjs` extensions, `package.json`
+  `"type"` fields with either `"module"` or `"commonjs"` values, or
+  `--input-type` or `--experimental-default-type` flags. Dynamic `import()`
+  expressions are supported in either CommonJS or ES modules and would not
+  cause a file to be treated as an ES module.
+
+Node.js will treat the following as [CommonJS][] when passed to `node` as the
+initial input, or when referenced by `import` statements or `import()`
+expressions:
 
 * Files with a `.cjs` extension.
 
@@ -84,11 +90,30 @@ or when referenced by `import` statements, `import()` expressions, or
 * Strings passed in as an argument to `--eval` or `--print`, or piped to `node`
   via `STDIN`, with the flag `--input-type=commonjs`.
 
-Package authors should include the [`"type"`][] field, even in packages where
-all sources are CommonJS. Being explicit about the `type` of the package will
-future-proof the package in case the default type of Node.js ever changes, and
-it will also make things easier for build tools and loaders to determine how the
-files in the package should be interpreted.
+Aside from these explicit cases, there are other cases where Node.js defaults to
+one module system or the other based on the value of the
+[`--experimental-default-type`][] flag:
+
+* Files ending in `.js` or with no extension, if there is no `package.json` file
+  present in the same folder or any parent folder.
+
+* Files ending in `.js` or with no extension, if the nearest parent
+  `package.json` field lacks a `"type"` field; unless the folder is inside a
+  `node_modules` folder. (Package scopes under `node_modules` are always treated
+  as CommonJS when the `package.json` file lacks a `"type"` field, regardless
+  of `--experimental-default-type`, for backward compatibility.)
+
+* Strings passed in as an argument to `--eval` or piped to `node` via `STDIN`,
+  when `--input-type` is unspecified.
+
+This flag currently defaults to `"commonjs"`, but it may change in the future to
+default to `"module"`. For this reason it is best to be explicit wherever
+possible; in particular, package authors should always include the [`"type"`][]
+field in their `package.json` files, even in packages where all sources are
+CommonJS. Being explicit about the `type` of the package will future-proof the
+package in case the default type of Node.js ever changes, and it will also make
+things easier for build tools and loaders to determine how the files in the
+package should be interpreted.
 
 ### Modules loaders
 
@@ -108,14 +133,15 @@ There is the CommonJS module loader:
   `process.dlopen()`.
 * It treats all files that lack `.json` or `.node` extensions as JavaScript
   text files.
-* It cannot be used to load ECMAScript modules (although it is possible to
-  [load ECMASCript modules from CommonJS modules][]). When used to load a
-  JavaScript text file that is not an ECMAScript module, it loads it as a
-  CommonJS module.
+* It can only be used to [load ECMASCript modules from CommonJS modules][] if
+  the module graph is synchronous (that contains no top-level `await`) when
+  `--experimental-require-module` is enabled.
+  When used to load a JavaScript text file that is not an ECMAScript module,
+  the file will be loaded as a CommonJS module.
 
 There is the ECMAScript module loader:
 
-* It is asynchronous.
+* It is asynchronous, unless it's being used to load modules for `require()`.
 * It is responsible for handling `import` statements and `import()` expressions.
 * It is not monkey patchable, can be customized using [loader hooks][].
 * It does not support folders as modules, directory indexes (e.g.
@@ -251,7 +277,7 @@ both CommonJS and ES modules in a single package please consult
 
 Existing packages introducing the [`"exports"`][] field will prevent consumers
 of the package from using any entry points that are not defined, including the
-[`package.json`][] (e.g. `require('your-package/package.json')`. **This will
+[`package.json`][] (e.g. `require('your-package/package.json')`). **This will
 likely be a breaking change.**
 
 To make the introduction of [`"exports"`][] non-breaking, ensure that every
@@ -598,9 +624,9 @@ specific to least specific as conditions should be defined:
 * `"require"` - matches when the package is loaded via `require()`. The
   referenced file should be loadable with `require()` although the condition
   matches regardless of the module format of the target file. Expected
-  formats include CommonJS, JSON, and native addons but not ES modules as
-  `require()` doesn't support them. _Always mutually exclusive with
-  `"import"`._
+  formats include CommonJS, JSON, native addons, and ES modules
+  if `--experimental-require-module` is enabled. _Always mutually
+  exclusive with `"import"`._
 * `"default"` - the generic fallback that always matches. Can be a CommonJS
   or ES module file. _This condition should always come last._
 
@@ -704,17 +730,16 @@ is provided below to assist with ecosystem coordination.
 
 * `"types"` - can be used by typing systems to resolve the typing file for
   the given export. _This condition should always be included first._
-* `"deno"` - indicates a variation for the Deno platform.
 * `"browser"` - any web browser environment.
-* `"react-native"` - will be matched by the React Native framework (all
-  platforms). _To target React Native for Web, `"browser"` should be specified
-  before this condition._
 * `"development"` - can be used to define a development-only environment
   entry point, for example to provide additional debugging context such as
   better error messages when running in a development mode. _Must always be
   mutually exclusive with `"production"`._
 * `"production"` - can be used to define a production environment entry
   point. _Must always be mutually exclusive with `"development"`._
+
+For other runtimes, platform-specific condition key definitions are maintained
+by the [WinterCG][] in the [Runtime Keys][] proposal specification.
 
 New conditions definitions may be added to this list by creating a pull request
 to the [Node.js documentation for this section][]. The requirements for listing
@@ -729,6 +754,10 @@ a new condition definition here are that:
   benefit to the ecosystem that wouldn't otherwise be possible. For example,
   this would not necessarily be the case for company-specific or
   application-specific conditions.
+* The condition should be such that a Node.js user would expect it to be in
+  Node.js core documentation. The `"types"` condition is a good example: It
+  doesn't really belong in the [Runtime Keys][] proposal but is a good fit
+  here in the Node.js docs.
 
 The above definitions may be moved to a dedicated conditions registry in due
 course.
@@ -1325,6 +1354,8 @@ This field defines [subpath imports][] for the current package.
 [ES module]: esm.md
 [ES modules]: esm.md
 [Node.js documentation for this section]: https://github.com/nodejs/node/blob/HEAD/doc/api/packages.md#conditions-definitions
+[Runtime Keys]: https://runtime-keys.proposal.wintercg.org/
+[WinterCG]: https://wintercg.org/
 [`"exports"`]: #exports
 [`"imports"`]: #imports
 [`"main"`]: #main
@@ -1332,6 +1363,8 @@ This field defines [subpath imports][] for the current package.
 [`"packageManager"`]: #packagemanager
 [`"type"`]: #type
 [`--conditions` / `-C` flag]: #resolving-user-conditions
+[`--experimental-default-type`]: cli.md#--experimental-default-typetype
+[`--experimental-detect-module`]: cli.md#--experimental-detect-module
 [`--no-addons` flag]: cli.md#--no-addons
 [`ERR_PACKAGE_PATH_NOT_EXPORTED`]: errors.md#err_package_path_not_exported
 [`esm`]: https://github.com/standard-things/esm#readme
@@ -1339,7 +1372,7 @@ This field defines [subpath imports][] for the current package.
 [entry points]: #package-entry-points
 [folders as modules]: modules.md#folders-as-modules
 [import maps]: https://github.com/WICG/import-maps
-[load ECMASCript modules from CommonJS modules]: modules.md#the-mjs-extension
+[load ECMASCript modules from CommonJS modules]: modules.md#loading-ecmascript-modules-using-require
 [loader hooks]: esm.md#loaders
 [packages folder mapping]: https://github.com/WICG/import-maps#packages-via-trailing-slashes
 [self-reference]: #self-referencing-a-package-using-its-name

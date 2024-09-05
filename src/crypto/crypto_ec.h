@@ -20,7 +20,7 @@ int GetOKPCurveFromName(const char* name);
 
 class ECDH final : public BaseObject {
  public:
-  ~ECDH() override;
+  ~ECDH() override = default;
 
   static void Initialize(Environment* env, v8::Local<v8::Object> target);
   static void RegisterExternalReferences(ExternalReferenceRegistry* registry);
@@ -148,10 +148,9 @@ v8::Maybe<void> ExportJWKEcKey(
     std::shared_ptr<KeyObjectData> key,
     v8::Local<v8::Object> target);
 
-v8::Maybe<bool> ExportJWKEdKey(
-    Environment* env,
-    std::shared_ptr<KeyObjectData> key,
-    v8::Local<v8::Object> target);
+v8::Maybe<void> ExportJWKEdKey(Environment* env,
+                               std::shared_ptr<KeyObjectData> key,
+                               v8::Local<v8::Object> target);
 
 std::shared_ptr<KeyObjectData> ImportJWKEcKey(
     Environment* env,

@@ -42,7 +42,8 @@ In this example, the variable `PI` is private to `circle.js`.
 The `module.exports` property can be assigned a new value (such as a function
 or object).
 
-Below, `bar.js` makes use of the `square` module, which exports a Square class:
+In the following code, `bar.js` makes use of the `square` module, which exports
+a Square class:
 
 ```js
 const Square = require('./square.js');
@@ -80,8 +81,10 @@ By default, Node.js will treat the following as CommonJS modules:
 * Files with a `.js` extension when the nearest parent `package.json` file
   contains a top-level field [`"type"`][] with a value of `"commonjs"`.
 
-* Files with a `.js` extension when the nearest parent `package.json` file
-  doesn't contain a top-level field [`"type"`][]. Package authors should include
+* Files with a `.js` extension or without an extension, when the nearest parent
+  `package.json` file doesn't contain a top-level field [`"type"`][] or there is
+  no `package.json` in any parent folder; unless the file contains syntax that
+  errors unless it is evaluated as an ES module. Package authors should include
   the [`"type"`][] field, even in packages where all sources are CommonJS. Being
   explicit about the `type` of the package will make things easier for build
   tools and loaders to determine how the files in the package should be
@@ -121,7 +124,7 @@ enough to support reasonable directory structures. Package manager programs
 such as `dpkg`, `rpm`, and `npm` will hopefully find it possible to build
 native packages from Node.js modules without modification.
 
-Below we give a suggested directory structure that could work:
+In the following, we give a suggested directory structure that could work:
 
 Let's say that we wanted to have the folder at
 `/usr/lib/node/<some-package>/<some-version>` hold the contents of a
@@ -165,15 +168,59 @@ variable. Since the module lookups using `node_modules` folders are all
 relative, and based on the real path of the files making the calls to
 `require()`, the packages themselves can be anywhere.
 
-## The `.mjs` extension
+## Loading ECMAScript modules using `require()`
 
-Due to the synchronous nature of `require()`, it is not possible to use it to
-load ECMAScript module files. Attempting to do so will throw a
-[`ERR_REQUIRE_ESM`][] error. Use [`import()`][] instead.
-
-The `.mjs` extension is reserved for [ECMAScript Modules][] which cannot be
-loaded via `require()`. See [Determining module system][] section for more info
+The `.mjs` extension is reserved for [ECMAScript Modules][].
+Currently, if the flag `--experimental-require-module` is not used, loading
+an ECMAScript module using `require()` will throw a [`ERR_REQUIRE_ESM`][]
+error, and users need to use [`import()`][] instead. See
+[Determining module system][] section for more info
 regarding which files are parsed as ECMAScript modules.
+
+If `--experimental-require-module` is enabled, and the ECMAScript module being
+loaded by `require()` meets the following requirements:
+
+* Explicitly marked as an ES module with a `"type": "module"` field in
+  the closest package.json or a `.mjs` extension.
+* Fully synchronous (contains no top-level `await`).
+
+`require()` will load the requested module as an ES Module, and return
+the module name space object. In this case it is similar to dynamic
+`import()` but is run synchronously and returns the name space object
+directly.
+
+```mjs
+// point.mjs
+export function distance(a, b) { return (b.x - a.x) ** 2 + (b.y - a.y) ** 2; }
+class Point {
+  constructor(x, y) { this.x = x; this.y = y; }
+}
+export default Point;
+```
+
+```cjs
+const required = require('./point.mjs');
+// [Module: null prototype] {
+//   default: [class Point],
+//   distance: [Function: distance]
+// }
+console.log(required);
+
+(async () => {
+  const imported = await import('./point.mjs');
+  console.log(imported === required);  // true
+})();
+```
+
+If the module being `require()`'d contains top-level `await`, or the module
+graph it `import`s contains top-level `await`,
+[`ERR_REQUIRE_ASYNC_MODULE`][] will be thrown. In this case, users should
+load the asynchronous module using `import()`.
+
+If `--experimental-print-required-tla` is enabled, instead of throwing
+`ERR_REQUIRE_ASYNC_MODULE` before evaluation, Node.js will evaluate the
+module, try to locate the top-level awaits, and print their location to
+help users fix them.
 
 ## All together
 
@@ -185,7 +232,7 @@ the `require.resolve()` function.
 Putting together all of the above, here is the high-level algorithm
 in pseudocode of what `require()` does:
 
-<pre>
+```text
 require(X) from module at path Y
 1. If X is a core module,
    a. return the core module
@@ -204,12 +251,24 @@ require(X) from module at path Y
 
 LOAD_AS_FILE(X)
 1. If X is a file, load X as its file extension format. STOP
-2. If X.js is a file, load X.js as JavaScript text. STOP
-3. If X.json is a file, parse X.json to a JavaScript Object. STOP
+2. If X.js is a file,
+    a. Find the closest package scope SCOPE to X.
+    b. If no scope was found, load X.js as a CommonJS module. STOP.
+    c. If the SCOPE/package.json contains "type" field,
+      1. If the "type" field is "module", load X.js as an ECMAScript module. STOP.
+      2. Else, load X.js as an CommonJS module. STOP.
+3. If X.json is a file, load X.json to a JavaScript Object. STOP
 4. If X.node is a file, load X.node as binary addon. STOP
+5. If X.mjs is a file, and `--experimental-require-module` is enabled,
+   load X.mjs as an ECMAScript module. STOP
 
 LOAD_INDEX(X)
-1. If X/index.js is a file, load X/index.js as JavaScript text. STOP
+1. If X/index.js is a file
+    a. Find the closest package scope SCOPE to X.
+    b. If no scope was found, load X/index.js as a CommonJS module. STOP.
+    c. If the SCOPE/package.json contains "type" field,
+      1. If the "type" field is "module", load X/index.js as an ECMAScript module. STOP.
+      2. Else, load X/index.js as an CommonJS module. STOP.
 2. If X/index.json is a file, parse X/index.json to a JavaScript object. STOP
 3. If X/index.node is a file, load X/index.node as binary addon. STOP
 
@@ -276,7 +335,7 @@ RESOLVE_ESM_MATCH(MATCH)
 2. If the file at RESOLVED_PATH exists, load RESOLVED_PATH as its extension
    format. STOP
 3. THROW "not found"
-</pre>
+```
 
 ## Caching
 
@@ -309,7 +368,7 @@ them as different modules and will reload the file multiple times. For example,
 `require('./foo')` and `require('./FOO')` return two different objects,
 irrespective of whether or not `./foo` and `./FOO` are the same file.
 
-## Core modules
+## Built-in modules
 
 <!--type=misc-->
 
@@ -325,19 +384,30 @@ changes:
 Node.js has several modules compiled into the binary. These modules are
 described in greater detail elsewhere in this documentation.
 
-The core modules are defined within the Node.js source and are located in the
+The built-in modules are defined within the Node.js source and are located in the
 `lib/` folder.
 
-Core modules can be identified using the `node:` prefix, in which case
+built-in modules can be identified using the `node:` prefix, in which case
 it bypasses the `require` cache. For instance, `require('node:http')` will
 always return the built in HTTP module, even if there is `require.cache` entry
 by that name.
 
-Some core modules are always preferentially loaded if their identifier is
+Some built-in modules are always preferentially loaded if their identifier is
 passed to `require()`. For instance, `require('http')` will always
 return the built-in HTTP module, even if there is a file by that name. The list
-of core modules that can be loaded without using the `node:` prefix is exposed
+of built-in modules that can be loaded without using the `node:` prefix is exposed
 as [`module.builtinModules`][].
+
+### Built-in modules with mandatory `node:` prefix
+
+When being loaded by `require()`, some built-in modules must be requested with the
+`node:` prefix. This requirement exists to prevent newly introduced built-in
+modules from having a conflict with user land packages that already have
+taken the name. Currently the built-in modules that requires the `node:` prefix are:
+
+* [`node:sea`][]
+* [`node:test`][]
+* [`node:test/reporters`][]
 
 ## Cycles
 
@@ -481,7 +551,7 @@ folders as modules, and work for both `require` and `import`.
 <!--type=misc-->
 
 If the module identifier passed to `require()` is not a
-[core](#core-modules) module, and does not begin with `'/'`, `'../'`, or
+[built-in](#built-in-modules) module, and does not begin with `'/'`, `'../'`, or
 `'./'`, then Node.js starts at the directory of the current module, and
 adds `/node_modules`, and attempts to load the module from that location.
 Node.js will not append `node_modules` to a path already ending in
@@ -1083,6 +1153,7 @@ This section was moved to
 [GLOBAL_FOLDERS]: #loading-from-the-global-folders
 [`"main"`]: packages.md#main
 [`"type"`]: packages.md#type
+[`ERR_REQUIRE_ASYNC_MODULE`]: errors.md#err_require_async_module
 [`ERR_REQUIRE_ESM`]: errors.md#err_require_esm
 [`ERR_UNSUPPORTED_DIR_IMPORT`]: errors.md#err_unsupported_dir_import
 [`MODULE_NOT_FOUND`]: errors.md#module_not_found
@@ -1094,6 +1165,9 @@ This section was moved to
 [`module.id`]: #moduleid
 [`module` core module]: module.md
 [`module` object]: #the-module-object
+[`node:sea`]: single-executable-applications.md#single-executable-application-api
+[`node:test/reporters`]: test.md#test-reporters
+[`node:test`]: test.md
 [`package.json`]: packages.md#nodejs-packagejson-field-definitions
 [`path.dirname()`]: path.md#pathdirnamepath
 [`require.main`]: #requiremain

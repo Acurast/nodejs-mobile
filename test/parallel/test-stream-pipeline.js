@@ -1476,10 +1476,14 @@ const tsp = require('timers/promises');
     });
 
     const duplex = new PassThrough();
+    const transform = new PassThrough();
 
     read.push(null);
 
-    await pipelinePromise(read, duplex, { end: false });
+    await pipelinePromise(read, transform, duplex, { end: false });
+
+    assert.strictEqual(transform.destroyed, true);
+    assert.strictEqual(transform.writableEnded, true);
 
     assert.strictEqual(duplex.destroyed, false);
     assert.strictEqual(duplex.writableEnded, false);
@@ -1633,4 +1637,32 @@ const tsp = require('timers/promises');
     assert.strictEqual(res, 'helloworld');
     assert.strictEqual(writable.closed, false);
   }));
+}
+
+{
+  const r = new Readable();
+  for (let i = 0; i < 4000; i++) {
+    r.push('asdfdagljanfgkaljdfn');
+  }
+  r.push(null);
+
+  let ended = false;
+  r.on('end', () => {
+    ended = true;
+  });
+
+  const w = new Writable({
+    write(chunk, enc, cb) {
+      cb(null);
+    },
+    final: common.mustCall((cb) => {
+      assert.strictEqual(ended, true);
+      cb(null);
+    })
+  });
+
+  pipeline(r, w, common.mustCall((err) => {
+    assert.strictEqual(err, undefined);
+  }));
+
 }

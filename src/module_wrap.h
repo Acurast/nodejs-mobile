@@ -10,7 +10,9 @@
 
 namespace node {
 
+class IsolateData;
 class Environment;
+class ExternalReferenceRegistry;
 
 namespace contextify {
 class ContextifyContext;
@@ -25,25 +27,27 @@ enum ScriptType : int {
 };
 
 enum HostDefinedOptions : int {
-  kType = 8,
-  kID = 9,
-  kLength = 10,
+  kID = 8,
+  kLength = 9,
 };
 
 class ModuleWrap : public BaseObject {
  public:
   enum InternalFields {
-    kModuleWrapBaseField = BaseObject::kInternalFieldCount,
+    kModuleSlot = BaseObject::kInternalFieldCount,
     kURLSlot,
     kSyntheticEvaluationStepsSlot,
     kContextObjectSlot,  // Object whose creation context is the target Context
     kInternalFieldCount
   };
 
-  static void Initialize(v8::Local<v8::Object> target,
-                         v8::Local<v8::Value> unused,
-                         v8::Local<v8::Context> context,
-                         void* priv);
+  static void CreatePerIsolateProperties(IsolateData* isolate_data,
+                                         v8::Local<v8::ObjectTemplate> target);
+  static void CreatePerContextProperties(v8::Local<v8::Object> target,
+                                         v8::Local<v8::Value> unused,
+                                         v8::Local<v8::Context> context,
+                                         void* priv);
+  static void RegisterExternalReferences(ExternalReferenceRegistry* registry);
   static void HostInitializeImportMetaObjectCallback(
       v8::Local<v8::Context> context,
       v8::Local<v8::Module> module,
@@ -53,9 +57,7 @@ class ModuleWrap : public BaseObject {
     tracker->TrackField("resolve_cache", resolve_cache_);
   }
 
-  inline uint32_t id() { return id_; }
   v8::Local<v8::Context> context() const;
-  static ModuleWrap* GetFromID(node::Environment*, uint32_t id);
 
   SET_MEMORY_INFO_NAME(ModuleWrap)
   SET_SELF_SIZE(ModuleWrap)
@@ -67,13 +69,23 @@ class ModuleWrap : public BaseObject {
   }
 
  private:
-  ModuleWrap(Environment* env,
+  ModuleWrap(Realm* realm,
              v8::Local<v8::Object> object,
              v8::Local<v8::Module> module,
-             v8::Local<v8::String> url);
+             v8::Local<v8::String> url,
+             v8::Local<v8::Object> context_object,
+             v8::Local<v8::Value> synthetic_evaluation_step);
   ~ModuleWrap() override;
 
   static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void GetModuleRequestsSync(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void CacheResolvedWrapsSync(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void InstantiateSync(const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void EvaluateSync(const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void GetNamespaceSync(const v8::FunctionCallbackInfo<v8::Value>& args);
+
   static void Link(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void Instantiate(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void Evaluate(const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -96,7 +108,7 @@ class ModuleWrap : public BaseObject {
   static v8::MaybeLocal<v8::Module> ResolveModuleCallback(
       v8::Local<v8::Context> context,
       v8::Local<v8::String> specifier,
-      v8::Local<v8::FixedArray> import_assertions,
+      v8::Local<v8::FixedArray> import_attributes,
       v8::Local<v8::Module> referrer);
   static ModuleWrap* GetFromModule(node::Environment*, v8::Local<v8::Module>);
 
@@ -105,7 +117,7 @@ class ModuleWrap : public BaseObject {
   contextify::ContextifyContext* contextify_context_ = nullptr;
   bool synthetic_ = false;
   bool linked_ = false;
-  uint32_t id_;
+  int module_hash_;
 };
 
 }  // namespace loader

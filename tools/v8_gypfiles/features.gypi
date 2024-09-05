@@ -63,10 +63,29 @@
         'is_component_build': 0,
       }],
       ['OS == "win" or OS == "mac"', {
-        # Sets -DSYSTEM_INSTRUMENTATION. Enables OS-dependent event tracing
+        # Sets -DENABLE_SYSTEM_INSTRUMENTATION. Enables OS-dependent event tracing
         'v8_enable_system_instrumentation': 1,
       }, {
         'v8_enable_system_instrumentation': 0,
+      }],
+      ['OS == "win"', {
+        'v8_enable_etw_stack_walking': 1,
+      }, {
+        'v8_enable_etw_stack_walking': 0,
+      }],
+      ['OS=="linux"', {
+        # Sets -dV8_ENABLE_PRIVATE_MAPPING_FORK_OPTIMIZATION.
+        #
+        # This flag speeds up the performance of fork/execve on Linux systems for
+        # embedders which use it (like Node.js). It works by marking the pages that
+        # V8 allocates as MADV_DONTFORK. Without MADV_DONTFORK, the Linux kernel
+        # spends a long time manipulating page mappings on fork and exec which the
+        # child process doesn't generally need to access.
+        #
+        # See v8:7381 for more details.
+        'v8_enable_private_mapping_fork_optimization': 1,
+      }, {
+        'v8_enable_private_mapping_fork_optimization': 0,
       }],
     ],
     'is_debug%': 0,
@@ -128,11 +147,15 @@
     # as per the --native-code-counters flag.
     'v8_enable_snapshot_native_code_counters%': 0,
 
+    # Use pre-generated static root pointer values from static-roots.h.
+    'v8_enable_static_roots%': 0,
+
     # Enable code-generation-time checking of types in the CodeStubAssembler.
     'v8_enable_verify_csa%': 0,
 
     # Enable pointer compression (sets -dV8_COMPRESS_POINTERS).
     'v8_enable_pointer_compression%': 0,
+    'v8_enable_pointer_compression_shared_cage%': 0,
     'v8_enable_31bit_smis_on_64bit_arch%': 0,
 
     # Sets -dV8_SHORT_BUILTIN_CALLS
@@ -163,10 +186,6 @@
     # Enables various testing features.
     'v8_enable_test_features%': 0,
 
-    # Enable the Maglev compiler.
-    # Sets -dV8_ENABLE_MAGLEV
-    'v8_enable_maglev%': 0,
-
     # With post mortem support enabled, metadata is embedded into libv8 that
     # describes various parameters of the VM for use by debuggers. See
     # tools/gen-postmortem-metadata.py for details.
@@ -178,6 +197,15 @@
     # Use Perfetto (https://perfetto.dev) as the default TracingController. Not
     # currently implemented.
     'v8_use_perfetto%': 0,
+
+    # Enable map packing & unpacking (sets -dV8_MAP_PACKING).
+    'v8_enable_map_packing%': 0,
+
+    # Scan the call stack conservatively during garbage collection.
+    'v8_enable_conservative_stack_scanning%': 0,
+
+    # Use direct pointers in local handles.
+    'v8_enable_direct_local%': 0,
 
     # Controls the threshold for on-heap/off-heap Typed Arrays.
     'v8_typed_array_max_size_in_heap%': 64,
@@ -222,16 +250,8 @@
     'v8_enable_zone_compression%': 0,
 
     # Enable the experimental V8 sandbox.
-    # Sets -DV8_SANDBOX.
+    # Sets -DV8_ENABLE_SANDBOX.
     'v8_enable_sandbox%': 0,
-
-    # Enable external pointer sandboxing. Requires v8_enable_sandbox.
-    # Sets -DV8_SANDBOXED_EXTERNAL_POINRTERS.
-    'v8_enable_sandboxed_external_pointers%': 0,
-
-    # Enable sandboxed pointers. Requires v8_enable_sandbox.
-    # Sets -DV8_SANDBOXED_POINTERS.
-    'v8_enable_sandboxed_pointers%': 0,
 
     # Experimental feature for collecting per-class zone memory stats.
     # Requires use_rtti = true
@@ -260,11 +280,15 @@
     # Enable global allocation site tracking.
     'v8_allocation_site_tracking%': 1,
 
-    'v8_scriptormodule_legacy_lifetime%': 1,
+    'v8_scriptormodule_legacy_lifetime%': 0,
 
     # Change code emission and runtime features to be CET shadow-stack compliant
     # (incomplete and experimental).
     'v8_enable_cet_shadow_stack%': 0,
+
+    # Compile V8 using zlib as dependency.
+    # Sets -DV8_USE_ZLIB
+    'v8_use_zlib%': 1,
 
     # Variables from v8.gni
 
@@ -277,9 +301,19 @@
     # Sets --DV8_LITE_MODE.
     'v8_enable_lite_mode%': 0,
 
+    # Enable the Turbofan compiler.
+    # Sets -dV8_ENABLE_TURBOFAN
+    'v8_enable_turbofan%': 1,
+
+    # Enable the Maglev compiler.
+    # Sets -dV8_ENABLE_MAGLEV
+    'v8_enable_maglev%': 0,
+
     # Include support for WebAssembly. If disabled, the 'WebAssembly' global
     # will not be available, and embedder APIs to generate WebAssembly modules
-    # will fail.
+    # will fail. Also, asm.js will not be translated to WebAssembly and will be
+    # executed as standard JavaScript instead.
+    # Sets -dV8_ENABLE_WEBASSEMBLY.
     'v8_enable_webassembly%': 1,
 
     # Enable advanced BigInt algorithms, costing about 10-30 KiB binary size
@@ -310,14 +344,20 @@
       ['v8_enable_hugepage==1', {
         'defines': ['ENABLE_HUGEPAGE',],
       }],
+      ['v8_enable_private_mapping_fork_optimization==1', {
+        'defines': ['V8_ENABLE_PRIVATE_MAPPING_FORK_OPTIMIZATION'],
+      }],
       ['v8_enable_vtunejit==1', {
         'defines': ['ENABLE_VTUNE_JIT_INTERFACE',],
       }],
       ['v8_enable_pointer_compression==1', {
-        'defines': [
-          'V8_COMPRESS_POINTERS',
-          'V8_COMPRESS_POINTERS_IN_ISOLATE_CAGE',
-        ],
+        'defines': ['V8_COMPRESS_POINTERS'],
+      }],
+      ['v8_enable_pointer_compression_shared_cage==1', {
+        'defines': ['V8_COMPRESS_POINTERS_IN_SHARED_CAGE'],
+      }],
+      ['v8_enable_pointer_compression==1 and v8_enable_pointer_compression_shared_cage==0', {
+        'defines': ['V8_COMPRESS_POINTERS_IN_ISOLATE_CAGE'],
       }],
       ['v8_enable_pointer_compression==1 or v8_enable_31bit_smis_on_64bit_arch==1', {
         'defines': ['V8_31BIT_SMIS_ON_64BIT_ARCH',],
@@ -329,13 +369,7 @@
         'defines': ['V8_COMPRESS_ZONES',],
       }],
       ['v8_enable_sandbox==1', {
-        'defines': ['V8_SANDBOX',],
-      }],
-      ['v8_enable_sandboxed_pointers==1', {
-        'defines': ['V8_SANDBOXED_POINTERS',],
-      }],
-      ['v8_enable_sandboxed_external_pointers==1', {
-        'defines': ['V8_SANDBOXED_EXTERNAL_POINTERS',],
+        'defines': ['V8_ENABLE_SANDBOX',],
       }],
       ['v8_enable_object_print==1', {
         'defines': ['OBJECT_PRINT',],
@@ -367,13 +401,9 @@
       }],
       ['v8_deprecation_warnings==1', {
         'defines': ['V8_DEPRECATION_WARNINGS',],
-      },{
-        'defines!': ['V8_DEPRECATION_WARNINGS',],
       }],
       ['v8_imminent_deprecation_warnings==1', {
         'defines': ['V8_IMMINENT_DEPRECATION_WARNINGS',],
-      },{
-        'defines!': ['V8_IMMINENT_DEPRECATION_WARNINGS',],
       }],
       ['v8_enable_i18n_support==1', {
         'defines': ['V8_INTL_SUPPORT',],
@@ -418,8 +448,20 @@
       ['v8_use_perfetto==1', {
         'defines': ['V8_USE_PERFETTO',],
       }],
+      ['v8_enable_map_packing==1', {
+        'defines': ['V8_MAP_PACKING',],
+      }],
       ['v8_win64_unwinding_info==1', {
         'defines': ['V8_WIN64_UNWINDING_INFO',],
+      }],
+      ['tsan==1', {
+        'defines': ['V8_IS_TSAN',],
+      }],
+      ['v8_enable_conservative_stack_scanning==1', {
+        'defines': ['V8_ENABLE_CONSERVATIVE_STACK_SCANNING',],
+      }],
+      ['v8_enable_direct_local==1', {
+        'defines': ['V8_ENABLE_DIRECT_LOCAL',],
       }],
       ['v8_enable_regexp_interpreter_threaded_dispatch==1', {
         'defines': ['V8_ENABLE_REGEXP_INTERPRETER_THREADED_DISPATCH',],
@@ -433,17 +475,29 @@
       ['v8_enable_cet_shadow_stack==1', {
         'defines': ['V8_ENABLE_CET_SHADOW_STACK',],
       }],
+      ['v8_enable_static_roots==1', {
+        'defines': ['V8_STATIC_ROOTS',],
+      }],
+      ['v8_use_zlib==1', {
+        'defines': ['V8_USE_ZLIB',],
+      }],
       ['v8_enable_precise_zone_stats==1', {
         'defines': ['V8_ENABLE_PRECISE_ZONE_STATS',],
       }],
       ['v8_enable_maglev==1', {
         'defines': ['V8_ENABLE_MAGLEV',],
       }],
+      ['v8_enable_turbofan==1', {
+        'defines': ['V8_ENABLE_TURBOFAN',],
+      }],
       ['v8_enable_swiss_name_dictionary==1', {
         'defines': ['V8_ENABLE_SWISS_NAME_DICTIONARY',],
       }],
       ['v8_enable_system_instrumentation==1', {
         'defines': ['V8_ENABLE_SYSTEM_INSTRUMENTATION',],
+      }],
+      ['v8_enable_etw_stack_walking==1', {
+        'defines': ['V8_ENABLE_ETW_STACK_WALKING',],
       }],
       ['v8_enable_webassembly==1', {
         'defines': ['V8_ENABLE_WEBASSEMBLY',],

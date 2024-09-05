@@ -1,11 +1,10 @@
 const t = require('tap')
 const { load: loadMockNpm } = require('../../fixtures/mock-npm.js')
 const MockRegistry = require('@npmcli/mock-registry')
-const mockGlobals = require('../../fixtures/mock-globals')
 
 const cacache = require('cacache')
-const fs = require('fs')
-const path = require('path')
+const fs = require('node:fs')
+const path = require('node:path')
 
 const pkg = 'test-package'
 
@@ -72,7 +71,11 @@ t.test('cache add single pkg', async t => {
     registry: npm.config.get('registry'),
   })
   const manifest = registry.manifest({ name: pkg })
-  await registry.package({ manifest, tarballs: { '1.0.0': path.join(npm.prefix, 'package') } })
+  await registry.package({
+    manifest,
+    times: 2,
+    tarballs: { '1.0.0': path.join(npm.prefix, 'package') },
+  })
   await npm.exec('cache', ['add', pkg])
   t.equal(joinedOutput(), '')
   // eslint-disable-next-line max-len
@@ -100,9 +103,13 @@ t.test('cache add multiple pkgs', async t => {
   })
   const manifest = registry.manifest({ name: pkg })
   const manifest2 = registry.manifest({ name: pkg2 })
-  await registry.package({ manifest, tarballs: { '1.0.0': path.join(npm.prefix, 'package') } })
   await registry.package({
-    manifest: manifest2, tarballs: { '1.0.0': path.join(npm.prefix, 'package') },
+    manifest,
+    times: 2,
+    tarballs: { '1.0.0': path.join(npm.prefix, 'package') },
+  })
+  await registry.package({
+    manifest: manifest2, times: 2, tarballs: { '1.0.0': path.join(npm.prefix, 'package') },
   })
   await npm.exec('cache', ['add', pkg, pkg2])
   t.equal(joinedOutput(), '')
@@ -267,8 +274,9 @@ t.test('cache verify', async t => {
 })
 
 t.test('cache verify as part of home', async t => {
-  const { npm, joinedOutput, prefix } = await loadMockNpm(t)
-  mockGlobals(t, { 'process.env.HOME': path.dirname(prefix) })
+  const { npm, joinedOutput } = await loadMockNpm(t, {
+    globals: ({ prefix }) => ({ 'process.env.HOME': path.dirname(prefix) }),
+  })
   await npm.exec('cache', ['verify'])
   t.match(joinedOutput(), 'Cache verified and compressed (~', 'contains ~ shorthand')
 })
@@ -302,8 +310,7 @@ t.test('cache verify w/ extra output', async t => {
 })
 
 t.test('cache completion', async t => {
-  const { npm } = await loadMockNpm(t)
-  const cache = await npm.cmd('cache')
+  const { cache } = await loadMockNpm(t, { command: 'cache' })
   const { completion } = cache
 
   const testComp = (argv, expect) => {

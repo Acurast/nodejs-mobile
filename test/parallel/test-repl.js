@@ -64,7 +64,7 @@ async function runReplTests(socket, prompt, tests) {
 
         // Cut away the initial prompt
         while (lineBuffer.startsWith(prompt))
-          lineBuffer = lineBuffer.substr(prompt.length);
+          lineBuffer = lineBuffer.slice(prompt.length);
 
         // Allow to match partial text if no newline was received, because
         // sending newlines from the REPL itself would be redundant
@@ -76,13 +76,13 @@ async function runReplTests(socket, prompt, tests) {
 
       // Split off the current line.
       const newlineOffset = lineBuffer.indexOf('\n');
-      let actualLine = lineBuffer.substr(0, newlineOffset);
-      lineBuffer = lineBuffer.substr(newlineOffset + 1);
+      let actualLine = lineBuffer.slice(0, newlineOffset);
+      lineBuffer = lineBuffer.slice(newlineOffset + 1);
 
       // This might have been skipped in the loop above because the buffer
       // already contained a \n to begin with and the entire loop was skipped.
       while (actualLine.startsWith(prompt))
-        actualLine = actualLine.substr(prompt.length);
+        actualLine = actualLine.slice(prompt.length);
 
       console.error('in:', JSON.stringify(actualLine));
 
@@ -764,6 +764,7 @@ const errorTests = [
       'Object [console] {',
       '  log: [Function: log],',
       '  warn: [Function: warn],',
+      '  error: [Function: error],',
       '  dir: [Function: dir],',
       '  time: [Function: time],',
       '  timeEnd: [Function: timeEnd],',
@@ -779,14 +780,14 @@ const errorTests = [
       / {2}debug: \[Function: (debug|log)],/,
       / {2}info: \[Function: (info|log)],/,
       / {2}dirxml: \[Function: (dirxml|log)],/,
-      / {2}error: \[Function: (error|warn)],/,
       / {2}groupCollapsed: \[Function: (groupCollapsed|group)],/,
       / {2}Console: \[Function: Console],?/,
       ...process.features.inspector ? [
         '  profile: [Function: profile],',
         '  profileEnd: [Function: profileEnd],',
         '  timeStamp: [Function: timeStamp],',
-        '  context: [Function: context]',
+        '  context: [Function: context],',
+        '  createTask: [Function: createTask]',
       ] : [],
       '}',
     ]
@@ -817,7 +818,74 @@ const tcpTests = [
       kArrow,
       '',
       'Uncaught:',
-      /^SyntaxError: .* dynamic import/,
+      'SyntaxError: Cannot use import statement inside the Node.js REPL, \
+alternatively use dynamic import: const { default: comeOn } = await import("fhqwhgads");',
+    ]
+  },
+  {
+    send: 'import { export1, export2 } from "module-name"',
+    expect: [
+      kSource,
+      kArrow,
+      '',
+      'Uncaught:',
+      'SyntaxError: Cannot use import statement inside the Node.js REPL, \
+alternatively use dynamic import: const { export1, export2 } = await import("module-name");',
+    ]
+  },
+  {
+    send: 'import * as name from "module-name";',
+    expect: [
+      kSource,
+      kArrow,
+      '',
+      'Uncaught:',
+      'SyntaxError: Cannot use import statement inside the Node.js REPL, \
+alternatively use dynamic import: const name = await import("module-name");',
+    ]
+  },
+  {
+    send: 'import "module-name";',
+    expect: [
+      kSource,
+      kArrow,
+      '',
+      'Uncaught:',
+      'SyntaxError: Cannot use import statement inside the Node.js REPL, \
+alternatively use dynamic import: await import("module-name");',
+    ]
+  },
+  {
+    send: 'import { export1 as localName1, export2 } from "bar";',
+    expect: [
+      kSource,
+      kArrow,
+      '',
+      'Uncaught:',
+      'SyntaxError: Cannot use import statement inside the Node.js REPL, \
+alternatively use dynamic import: const { export1: localName1, export2 } = await import("bar");',
+    ]
+  },
+  {
+    send: 'import alias from "bar";',
+    expect: [
+      kSource,
+      kArrow,
+      '',
+      'Uncaught:',
+      'SyntaxError: Cannot use import statement inside the Node.js REPL, \
+alternatively use dynamic import: const { default: alias } = await import("bar");',
+    ]
+  },
+  {
+    send: 'import alias, {namedExport} from "bar";',
+    expect: [
+      kSource,
+      kArrow,
+      '',
+      'Uncaught:',
+      'SyntaxError: Cannot use import statement inside the Node.js REPL, \
+alternatively use dynamic import: const { default: alias, namedExport } = await import("bar");',
     ]
   },
 ];
