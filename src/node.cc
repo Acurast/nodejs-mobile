@@ -1201,7 +1201,6 @@ InitializeOncePerProcessInternal(const std::vector<std::string>& args,
   if (!(flags & ProcessInitializationFlags::kNoInitializeV8)) {
     V8::Initialize();
   }
-<<<<<<< HEAD
 
   if (!(flags & ProcessInitializationFlags::kNoInitializeCppgc)) {
     v8::PageAllocator* allocator = nullptr;
@@ -1242,8 +1241,6 @@ InitializeOncePerProcessInternal(const std::vector<std::string>& args,
   }
 #endif  // NODE_USE_V8_WASM_TRAP_HANDLER
 
-=======
->>>>>>> 903309f51e1c9e78c01a368b4ee04df703961787
   performance::performance_v8_start = PERFORMANCE_NOW();
   per_process::v8_initialized = true;
 
@@ -1523,24 +1520,19 @@ static ExitCode StartInternal(int argc, char** argv) {
   return main_instance.Run();
 }
 
-<<<<<<< HEAD
 int Start(int argc, char** argv) {
 #ifndef DISABLE_SINGLE_EXECUTABLE_APPLICATION
   std::tie(argc, argv) = sea::FixupArgsForSEA(argc, argv);
 #endif
   return static_cast<int>(StartInternal(argc, argv));
-=======
+}
+
 int Stop() {
   if (per_process::tempEnv != nullptr && !per_process::tempEnv->is_stopping()) {
     Environment *env = per_process::tempEnv;
     return Stop(env);
   }
   return 0;
-}
-
-int Stop(Environment* env) {
-  return Stop(env, StopFlags::kNoFlags);
->>>>>>> 903309f51e1c9e78c01a368b4ee04df703961787
 }
 
 int Stop(Environment* env, StopFlags::Flags flags) {
