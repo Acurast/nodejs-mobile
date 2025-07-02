@@ -35,6 +35,7 @@ NODE_MAIN(int argc, node::argv_type raw_argv[]) {
   std::unique_ptr<node::InitializationResult> result =
       node::InitializeOncePerProcess(
           args,
+          uv_default_loop(),
           {
               node::ProcessInitializationFlags::kNoInitializeV8,
               node::ProcessInitializationFlags::kNoInitializeNodeV8Platform,

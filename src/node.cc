@@ -754,7 +754,8 @@ void ResetStdio() {
 static ExitCode ProcessGlobalArgsInternal(std::vector<std::string>* args,
                                           std::vector<std::string>* exec_args,
                                           std::vector<std::string>* errors,
-                                          OptionEnvvarSettings settings) {
+                                          OptionEnvvarSettings settings,
+                                          struct uv_loop_s* event_loop) {
   // Parse a few arguments which are specific to Node.
   std::vector<std::string> v8_args;
 
@@ -814,7 +815,7 @@ static ExitCode ProcessGlobalArgsInternal(std::vector<std::string>* args,
   // performance penalty of frequent EINTR wakeups when the profiler is running.
   // Only do this for v8.log profiling, as it breaks v8::CpuProfiler users.
   if (std::find(v8_args.begin(), v8_args.end(), "--prof") != v8_args.end()) {
-    uv_loop_configure(uv_default_loop(), UV_LOOP_BLOCK_SIGNAL, SIGPROF);
+    uv_loop_configure(event_loop, UV_LOOP_BLOCK_SIGNAL, SIGPROF);
   }
 #endif
 
@@ -840,9 +841,10 @@ static ExitCode ProcessGlobalArgsInternal(std::vector<std::string>* args,
 int ProcessGlobalArgs(std::vector<std::string>* args,
                       std::vector<std::string>* exec_args,
                       std::vector<std::string>* errors,
-                      OptionEnvvarSettings settings) {
+                      OptionEnvvarSettings settings,
+                      struct uv_loop_s* event_loop) {
   return static_cast<int>(
-      ProcessGlobalArgsInternal(args, exec_args, errors, settings));
+      ProcessGlobalArgsInternal(args, exec_args, errors, settings, event_loop));
 }
 
 static std::atomic_bool init_called{false};
@@ -853,6 +855,7 @@ static ExitCode InitializeNodeWithArgsInternal(
     std::vector<std::string>* argv,
     std::vector<std::string>* exec_argv,
     std::vector<std::string>* errors,
+    struct uv_loop_s* event_loop,
     ProcessInitializationFlags::Flags flags) {
   // Make sure InitializeNodeWithArgs() is called only once.
   CHECK(!init_called.exchange(true));
@@ -935,7 +938,7 @@ static ExitCode InitializeNodeWithArgsInternal(
       env_argv.insert(env_argv.begin(), argv->at(0));
 
       const ExitCode exit_code = ProcessGlobalArgsInternal(
-          &env_argv, nullptr, errors, kAllowedInEnvvar);
+          &env_argv, nullptr, errors, kAllowedInEnvvar, event_loop);
       if (exit_code != ExitCode::kNoFailure) return exit_code;
     }
   } else {
@@ -952,7 +955,7 @@ static ExitCode InitializeNodeWithArgsInternal(
 
   if (!(flags & ProcessInitializationFlags::kDisableCLIOptions)) {
     const ExitCode exit_code =
-        ProcessGlobalArgsInternal(argv, exec_argv, errors, kDisallowedInEnvvar);
+        ProcessGlobalArgsInternal(argv, exec_argv, errors, kDisallowedInEnvvar, event_loop);
     if (exit_code != ExitCode::kNoFailure) return exit_code;
   }
 
@@ -1019,13 +1022,15 @@ static ExitCode InitializeNodeWithArgsInternal(
 int InitializeNodeWithArgs(std::vector<std::string>* argv,
                            std::vector<std::string>* exec_argv,
                            std::vector<std::string>* errors,
+                           struct uv_loop_s* event_loop,
                            ProcessInitializationFlags::Flags flags) {
   return static_cast<int>(
-      InitializeNodeWithArgsInternal(argv, exec_argv, errors, flags));
+      InitializeNodeWithArgsInternal(argv, exec_argv, errors, event_loop, flags));
 }
 
 static std::unique_ptr<InitializationResultImpl>
 InitializeOncePerProcessInternal(const std::vector<std::string>& args,
+                                 struct uv_loop_s* event_loop,
                                  ProcessInitializationFlags::Flags flags =
                                      ProcessInitializationFlags::kNoFlags) {
   auto result = std::make_unique<InitializationResultImpl>();
@@ -1042,7 +1047,7 @@ InitializeOncePerProcessInternal(const std::vector<std::string>& args,
   // This needs to run *before* V8::Initialize().
   {
     result->exit_code_ = InitializeNodeWithArgsInternal(
-        &result->args_, &result->exec_args_, &result->errors_, flags);
+        &result->args_, &result->exec_args_, &result->errors_, event_loop, flags);
     if (result->exit_code_enum() != ExitCode::kNoFailure) {
       result->early_return_ = true;
       return result;
@@ -1249,8 +1254,9 @@ InitializeOncePerProcessInternal(const std::vector<std::string>& args,
 
 std::unique_ptr<InitializationResult> InitializeOncePerProcess(
     const std::vector<std::string>& args,
+    struct uv_loop_s* event_loop,
     ProcessInitializationFlags::Flags flags) {
-  return InitializeOncePerProcessInternal(args, flags);
+  return InitializeOncePerProcessInternal(args, event_loop, flags);
 }
 
 void TearDownOncePerProcess() {
@@ -1456,16 +1462,19 @@ bool LoadSnapshotData(const SnapshotData** snapshot_data_ptr) {
   return true;
 }
 
-static ExitCode StartInternal(int argc, char** argv) {
+static ExitCode StartInternal(int argc, char** argv, struct uv_loop_s* event_loop) {
   CHECK_GT(argc, 0);
 
   // Hack around with the argv pointer. Used for process.title = "blah".
   argv = uv_setup_args(argc, argv);
+  if (event_loop == nullptr) {
+    event_loop = uv_default_loop();
+  }
   per_process::args_mem = argv;
 
   std::unique_ptr<InitializationResultImpl> result =
       InitializeOncePerProcessInternal(
-          std::vector<std::string>(argv, argv + argc));
+          std::vector<std::string>(argv, argv + argc), event_loop);
   for (const std::string& error : result->errors()) {
     FPrintF(stderr, "%s: %s\n", result->args().at(0), error);
   }
@@ -1485,7 +1494,7 @@ static ExitCode StartInternal(int argc, char** argv) {
     }
   });
 
-  uv_loop_configure(uv_default_loop(), UV_METRICS_IDLE_TIME);
+  uv_loop_configure(event_loop, UV_METRICS_IDLE_TIME);
   std::string sea_config = per_process::cli_options->experimental_sea_config;
   if (!sea_config.empty()) {
 #if !defined(DISABLE_SINGLE_EXECUTABLE_APPLICATION)
@@ -1513,18 +1522,18 @@ static ExitCode StartInternal(int argc, char** argv) {
     return ExitCode::kStartupSnapshotFailure;
   }
   NodeMainInstance main_instance(snapshot_data,
-                                 uv_default_loop(),
+                                 event_loop,
                                  per_process::v8_platform.Platform(),
                                  result->args(),
                                  result->exec_args());
   return main_instance.Run();
 }
 
-int Start(int argc, char** argv) {
+int Start(int argc, char** argv, struct uv_loop_s* event_loop) {
 #ifndef DISABLE_SINGLE_EXECUTABLE_APPLICATION
   std::tie(argc, argv) = sea::FixupArgsForSEA(argc, argv);
 #endif
-  return static_cast<int>(StartInternal(argc, argv));
+  return static_cast<int>(StartInternal(argc, argv, event_loop));
 }
 
 int Stop() {
